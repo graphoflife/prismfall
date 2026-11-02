@@ -2,12 +2,12 @@
 
 import { Game } from './game.js';
 import { Audio } from './audio.js';
-import { Background } from './theme.js';
-import { pieceSprites } from './sprites.js';
+import { makeBackground } from './theme.js';
+import { STYLES, styleSprites } from './look.js';
 
 const KEY = 'pixelpop.v1';
 const DEFAULTS = {
-  settings: { sfx: true, music: true, vibrate: true },
+  settings: { style: 'realistic', sfx: true, music: true, vibrate: true },
   stats: { best: 0, bestMove: 0, bestChain: 0, bestLevel: 1, popped: 0, games: 1 },
 };
 
@@ -22,6 +22,7 @@ function load() {
 }
 
 const data = load();
+if (!STYLES.some((s) => s.id === data.settings.style)) data.settings.style = DEFAULTS.settings.style;
 const persist = () => {
   try { localStorage.setItem(KEY, JSON.stringify(data)); } catch { /* private mode etc. */ }
 };
@@ -73,14 +74,64 @@ game.vibrate = data.settings.vibrate;
 
 const bgCanvas = $('bg');
 const bgCtx = bgCanvas.getContext('2d');
-const bg = new Background();
+let bg = null;
 let bgTime = 0;
-const BG_PIXEL = 3; // css pixels per background pixel
 
 function sizeBackground() {
-  const w = Math.ceil(window.innerWidth / BG_PIXEL), h = Math.ceil(window.innerHeight / BG_PIXEL);
+  // the pixel style uses 3 css pixels per background pixel, the others draw at screen resolution
+  const scale = data.settings.style === 'pixel' ? 1 / 3 : Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.ceil(window.innerWidth * scale), h = Math.ceil(window.innerHeight * scale);
   bgCanvas.width = w; bgCanvas.height = h;
   bg.resize(w, h);
+}
+
+// ---------------------------------------------------------------- style
+
+const FONT_OF = { pixel: '10px "Press Start 2P"', comic: '10px Bangers', realistic: '700 10px Cinzel' };
+
+function applyStyle(id) {
+  data.settings.style = id;
+  persist();
+  document.body.dataset.style = id;
+  document.fonts?.load(FONT_OF[id]);
+  game.setStyle(id);
+  bg = makeBackground(id);
+  sizeBackground();
+  sizeParade();
+  document.querySelectorAll('[data-style-id]').forEach((el) => el.setAttribute('aria-pressed', String(el.dataset.styleId === id)));
+}
+
+function stylePreview(id) {
+  const set = styleSprites(id);
+  const k = id === 'pixel' ? 1 : 3; // pixel previews stay at sprite size and scale up crisply
+  const c = document.createElement('canvas');
+  c.width = (7 * 22 + 2) * k;
+  c.height = 24 * k;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#2a1650';
+  ctx.fillRect(0, 0, c.width, c.height);
+  for (let i = 0; i < 7; i++) ctx.drawImage(set.pieces[i].img, (2 + i * 22) * k, 2 * k, 20 * k, 20 * k);
+  return c;
+}
+
+// The previews need every style's sprites, so they are built when the menu first opens.
+let pickerBuilt = false;
+function buildStylePicker() {
+  if (pickerBuilt) return;
+  pickerBuilt = true;
+  for (const { id, name, blurb } of STYLES) {
+    const card = document.createElement('button');
+    card.className = 'style-card';
+    card.dataset.styleId = id;
+    card.setAttribute('aria-pressed', String(id === data.settings.style));
+    const preview = stylePreview(id);
+    if (id === 'pixel') preview.classList.add('crisp');
+    const label = document.createElement('b'); label.textContent = name.toUpperCase();
+    const text = document.createElement('small'); text.textContent = blurb;
+    card.append(preview, label, text);
+    card.addEventListener('click', () => { audio.unlock(); applyStyle(id); audio.select(); });
+    $('style-grid').append(card);
+  }
 }
 
 // ------------------------------------------------------------- overlays
@@ -114,7 +165,7 @@ function setSound(sfx, music) {
 
 function wireUi() {
   $('btn-hint').addEventListener('click', () => { audio.unlock(); game.showHint(true); });
-  $('btn-menu').addEventListener('click', () => { audio.unlock(); fillRecords(); open('menu'); });
+  $('btn-menu').addEventListener('click', () => { audio.unlock(); buildStylePicker(); fillRecords(); open('menu'); });
   $('btn-new').addEventListener('click', () => { close('menu'); open('confirm'); });
   $('btn-confirm-new').addEventListener('click', async () => {
     close('confirm');
@@ -175,13 +226,27 @@ window.addEventListener('resize', () => { layout(); sizeBackground(); });
 let splashOpen = true;
 const parade = $('parade');
 const paradeCtx = parade.getContext('2d');
+const PARADE_W = 168, PARADE_H = 34;
+let paradeScale = 1;
+
+function sizeParade() {
+  paradeScale = data.settings.style === 'pixel' ? 1 : 3;
+  parade.width = PARADE_W * paradeScale;
+  parade.height = PARADE_H * paradeScale;
+}
+
 function drawParade(t) {
-  const set = pieceSprites();
-  paradeCtx.clearRect(0, 0, parade.width, parade.height);
+  const set = game.sprites;
+  paradeCtx.setTransform(paradeScale, 0, 0, paradeScale, 0, 0);
+  paradeCtx.clearRect(0, 0, PARADE_W, PARADE_H);
+  const crisp = paradeScale === 1;
   for (let i = 0; i < 7; i++) {
-    const y = 8 + Math.round(Math.sin(t * 4 + i * 0.8) * 4);
-    paradeCtx.drawImage(set.pieces[i].shadow, 4 + i * 23 + 1, y + 1);
-    paradeCtx.drawImage(set.pieces[i].img, 4 + i * 23, y);
+    const wave = Math.sin(t * 4 + i * 0.8) * 4;
+    const y = 8 + (crisp ? Math.round(wave) : wave);
+    paradeCtx.globalAlpha = 0.5;
+    paradeCtx.drawImage(set.pieces[i].shadow, 4 + i * 23 + 1, y + 1, 20, 20);
+    paradeCtx.globalAlpha = 1;
+    paradeCtx.drawImage(set.pieces[i].img, 4 + i * 23, y, 20, 20);
   }
 }
 
@@ -203,7 +268,7 @@ function frame(now) {
 // ----------------------------------------------------------------- boot
 
 wireUi();
-sizeBackground();
+applyStyle(data.settings.style);
 syncSoundToggles();
 game.start(data.game, data.stats);
 // hide the board until PLAY drops it in
@@ -213,6 +278,5 @@ $('btn-play').textContent = data.game ? 'CONTINUE' : 'PLAY';
 hud.shown = hud.target;
 $('score').textContent = fmt(hud.shown);
 layout();
-document.fonts?.load('10px "Press Start 2P"');
 if (new URLSearchParams(location.search).has('debug')) window.game = game;
 requestAnimationFrame(frame);

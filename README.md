@@ -1,6 +1,6 @@
 # Pixel Pop! Zen
 
-A relaxing pixel-art jewel match-3 game for the browser, in comic style. Zen mode only:
+A relaxing jewel match-3 game for the browser. Zen mode only:
 no timer, no game over, just combos, cascades and explosions.
 
 **Play it:** https://graphoflife.github.io/pixel-pop/
@@ -10,8 +10,12 @@ screen and it runs like an app.
 
 ## Features
 
-- **Seven jewels**, all pixel art generated in code: faceted heart, hexagon, kite,
-  emerald, round, trillion and pear cuts
+- **Three graphics styles**, switchable any time in the menu, even mid-game:
+  - **Realistic**: cut stones with facets, soft light and glints, on velvet in a gold frame
+  - **Comic**: bold ink, flat colour, halftone dots and "ZAP!" starbursts
+  - **Pixel**: chunky retro pixel art
+- **Seven jewels**, all drawn in code with no image files: faceted heart, hexagon,
+  kite, emerald, round, trillion and pear cuts
 - **Specials**
   - 4 in a row → **Nova**: blasts the 3×3 area around it
   - L or T shape → **Cross**: clears its whole row and column
@@ -43,7 +47,7 @@ python3 -m http.server 8080
 Then open http://localhost:8080. ES modules need to be served over HTTP, so
 opening `index.html` directly from disk won't work.
 
-`tools/gallery.html` shows every gem sprite at large size.
+`tools/gallery.html` shows every gem sprite in every style at large size.
 
 ## Tests
 
@@ -58,9 +62,11 @@ node tests/board.test.mjs
 | File | What it does |
 | --- | --- |
 | `js/board.js` | Match finding, specials, chain reactions, move search, smart refill, shuffle |
-| `js/game.js` | Turn flow as awaited animations, the move queue, input and pixel-art rendering |
-| `js/sprites.js` | Procedural pixel-art painter for every gem |
-| `js/theme.js` | Board colours, comic words and the animated background |
-| `js/fx.js` | Particles, shockwaves, lightning, comic starbursts, score popups |
+| `js/game.js` | Turn flow as awaited animations, the move queue, input and rendering |
+| `js/sprites.js` | Pixel-art painter for every gem |
+| `js/gems.js` | High-resolution gem painters for the realistic and comic styles |
+| `js/look.js` | Per-style board drawing: frame, markers, special pieces, twinkles |
+| `js/theme.js` | Board colours, comic words and the animated background of each style |
+| `js/fx.js` | Particles, shockwaves, lightning, starbursts and score popups in each style |
 | `js/audio.js` | WebAudio sound effects and generative ambient music |
 | `js/main.js` | HUD, menus, persistence and the frame loop |

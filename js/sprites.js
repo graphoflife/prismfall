@@ -84,7 +84,7 @@ export class Pix {
 
 // ================================================================ JEWELS
 
-const GEM_RAMPS = [
+export const GEM_RAMPS = [
   ['#3d0414', '#7a0c25', '#c41a3b', '#ef3f55', '#ff8a8f', '#ffe3e3'],
   ['#4f1c03', '#94400a', '#e0701a', '#ffa036', '#ffd27a', '#fff4da'],
   ['#4f3a00', '#957000', '#dcb614', '#ffe23f', '#fff39a', '#fffde6'],
@@ -245,7 +245,8 @@ function shineFrames(pix, frames = 7) {
   });
 }
 
-// The brightest third of a sprite's pixels: where idle sparkles may appear.
+// The brightest third of a sprite's pixels, as 0..1 fractions of the sprite:
+// where idle sparkles may appear.
 function brightSpots(pix) {
   const pts = [];
   for (let y = 0; y < pix.h; y++) {
@@ -257,13 +258,13 @@ function brightSpots(pix) {
     }
   }
   pts.sort((a, b) => b[2] - a[2]);
-  return pts.slice(0, Math.max(6, Math.floor(pts.length / 3))).map(([x, y]) => [x, y]);
+  return pts.slice(0, Math.max(6, Math.floor(pts.length / 3))).map(([x, y]) => [x / pix.w, y / pix.h]);
 }
 
 let cache = null;
 
-// Every image the board needs, built once on first use.
-export function pieceSprites() {
+// Every image the board needs in the pixel style, built once on first use.
+export function pixelSprites() {
   if (cache) return cache;
   const pieces = Array.from({ length: 7 }, (_, t) => {
     const pix = gemSprite(t);

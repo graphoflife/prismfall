@@ -2,13 +2,10 @@
 // loop as awaited animations, handles input and renders the scene.
 
 import * as B from './board.js';
-import { pieceSprites, INK } from './sprites.js';
 import { THEME, CHAIN_WORDS } from './theme.js';
+import { T, PAD, BOARD, ART, makeLook } from './look.js';
 import { Fx } from './fx.js';
 
-const T = 20;                     // tile size in art pixels
-const PAD = 6;                    // frame around the board
-const ART = B.SIZE * T + PAD * 2; // scene size in art pixels
 const GRAVITY = 60;               // cells / s^2
 const HINT_AFTER = 7000;          // ms of idling before a hint appears
 
@@ -49,12 +46,19 @@ export class Game {
     this.vibrate = true;
     this.layout = { S: 1, ox: 0, oy: 0 };
     this.theme = THEME;
-    this.sprites = pieceSprites();
-    this.frame = this.buildFrame();
+    this.cssSize = null;
     this.bindInput();
   }
 
   // ------------------------------------------------------------- setup
+
+  // Switching style only changes how things are drawn, so it is safe mid-game.
+  setStyle(style) {
+    this.look = makeLook(style);
+    this.sprites = this.look.sprites;
+    this.fx.setStyle(style);
+    if (this.cssSize) this.resize(...this.cssSize);
+  }
 
   start(saved, stats) {
     this.stats = stats;
@@ -410,7 +414,7 @@ export class Game {
       this.fx.ring(x, y, this.theme.board.frame, 14, 0.35);
       for (let i = 0; i < 6; i++) this.fx.sparkle(x + (Math.random() - 0.5) * 16, y + (Math.random() - 0.5) * 16);
       this.audio.create();
-      if (cr.special === B.PRISM) this.fx.burst(x, y - 6, pick(this.theme.words.create), { size: 6, fill: '#7dff7a' });
+      if (cr.special === B.PRISM) this.fx.burst(x, y - 6, pick(this.theme.words.create), { size: 6, fill: '#7dff7a', flavor: true });
     }
     if (creations.length) await this.wait(120);
   }
@@ -469,7 +473,7 @@ export class Game {
         this.fx.ring(x, y, '#ffffff', big ? 36 : 20, 0.25);
         this.fx.explode(x, y, ev.type >= 0 ? this.sprites.ramps[ev.type] : null, big ? 40 : 22, big ? 2 : 1.4);
         this.fx.kick(big ? 7 : 4, big ? 0.4 : 0.18);
-        this.fx.burst(x, y, pick(words.nova), { size: big ? 9 : 7 });
+        this.fx.burst(x, y, pick(words.nova), { size: big ? 9 : 7, flavor: true });
         this.audio.nova(big ? 2 : 1);
         buzz(big ? 80 : 40);
         break;
@@ -481,7 +485,7 @@ export class Game {
         for (const r of rows) if (r >= 0 && r < B.SIZE) this.fx.beam(PAD, cy(r), PAD + B.SIZE * T, cy(r), colour);
         for (const c of cols) if (c >= 0 && c < B.SIZE) this.fx.beam(cx(c), PAD, cx(c), PAD + B.SIZE * T, colour);
         this.fx.kick(ev.kind === 'cross' ? 3 : 6, ev.kind === 'cross' ? 0.12 : 0.3);
-        this.fx.burst(x, y, pick(words.cross), { size: ev.kind === 'cross' ? 7 : 9, fill: '#5ee7ff' });
+        this.fx.burst(x, y, pick(words.cross), { size: ev.kind === 'cross' ? 7 : 9, fill: '#5ee7ff', flavor: true });
         this.audio.zap();
         buzz(30);
         break;
@@ -489,7 +493,7 @@ export class Game {
       case 'prism': {
         for (const k of ev.cells.slice(0, 40)) this.fx.bolt(x, y, cx(B.colOf(k)), cy(B.rowOf(k)), colour);
         this.fx.kick(4, 0.25, colour);
-        this.fx.burst(x, y, pick(words.prism), { size: 8, fill: '#ff8fd0', text: '#ffffff' });
+        this.fx.burst(x, y, pick(words.prism), { size: 8, fill: '#ff8fd0', text: '#ffffff', flavor: true });
         this.audio.prism();
         buzz(60);
         break;
@@ -497,7 +501,7 @@ export class Game {
       case 'prism2': {
         this.fx.kick(9, 0.8);
         for (let i = 0; i < 4; i++) this.fx.ring(x, y, ['#ff4d6d', '#ffd23f', '#5ee7ff', '#b468f0'][i], 40 + i * 25, 0.4 + i * 0.12, 3);
-        this.fx.burst(ART / 2, ART / 2, pick(words.mega), { size: 10, fill: '#ffd23f', text: '#ff3d6e' });
+        this.fx.burst(ART / 2, ART / 2, pick(words.mega), { size: 10, fill: '#ffd23f', text: '#ff3d6e', flavor: true });
         this.audio.mega();
         buzz(150);
         break;
@@ -605,48 +609,49 @@ export class Game {
   // ------------------------------------------------------------- render
 
   resize(cssW, cssH, dpr) {
+    this.cssSize = [cssW, cssH, dpr];
     const w = Math.max(1, Math.round(cssW * dpr)), h = Math.max(1, Math.round(cssH * dpr));
     this.canvas.width = w; this.canvas.height = h;
     let S = Math.min(w, h) / ART;
     // whole-number scaling keeps every art pixel the same size, but only when it
     // costs next to no space; otherwise fill the width (on phone screens the
     // odd one-device-pixel difference between art pixels is invisible)
-    if (S >= 2 && Math.floor(S) / S > 0.985) S = Math.floor(S);
+    if (this.look.pixel && S >= 2 && Math.floor(S) / S > 0.985) S = Math.floor(S);
     this.layout = { S, ox: Math.round((w - ART * S) / 2), oy: Math.round((h - ART * S) / 2) };
-  }
-
-  buildFrame() {
-    const c = document.createElement('canvas');
-    c.width = c.height = ART;
-    const ctx = c.getContext('2d');
-    const { a, b, frame, light, dark } = this.theme.board;
-    const rect = (x, y, w, h, col) => { ctx.fillStyle = col; ctx.fillRect(x, y, w, h); };
-    // chunky comic frame with pixel-cut corners
-    rect(2, 0, ART - 4, ART, INK); rect(0, 2, ART, ART - 4, INK); rect(1, 1, ART - 2, ART - 2, INK);
-    rect(2, 2, ART - 4, ART - 4, frame);
-    rect(2, 2, ART - 4, 1, light); rect(2, 2, 1, ART - 4, light);
-    rect(2, ART - 3, ART - 4, 1, dark); rect(ART - 3, 2, 1, ART - 4, dark);
-    rect(PAD - 1, PAD - 1, B.SIZE * T + 2, B.SIZE * T + 2, INK);
-    for (const [x, y] of [[3, 3], [ART - 5, 3], [3, ART - 5], [ART - 5, ART - 5]]) { rect(x, y, 2, 2, light); rect(x + 1, y + 1, 1, 1, dark); }
-    for (let r = 0; r < B.SIZE; r++) {
-      for (let col = 0; col < B.SIZE; col++) rect(PAD + col * T, PAD + r * T, T, T, (r + col) % 2 ? b : a);
-    }
-    // halftone speckle on the tiles
-    ctx.fillStyle = 'rgba(255,255,255,0.05)';
-    for (let y = PAD; y < PAD + B.SIZE * T; y += 3) for (let x = PAD + (y % 2); x < PAD + B.SIZE * T; x += 4) ctx.fillRect(x, y, 1, 1);
-    return c;
+    this.frame = this.look.buildFrame(S);
   }
 
   render() {
-    const s = this.sctx;
-    s.imageSmoothingEnabled = false;
-    s.clearRect(0, 0, ART, ART);
-    s.drawImage(this.frame, 0, 0);
-    this.drawMarkers(s);
+    const { S, ox, oy } = this.layout;
+    const ctx = this.ctx;
+    const dx = ox + this.fx.offset.x * S, dy = oy + this.fx.offset.y * S;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    if (this.look.pixel) {
+      // everything lands in a tiny scene first, then gets scaled up in big square pixels
+      const s = this.sctx;
+      s.imageSmoothingEnabled = false;
+      s.clearRect(0, 0, ART, ART);
+      this.drawScene(s);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(this.scene, dx, dy, ART * S, ART * S);
+    } else {
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.setTransform(S, 0, 0, S, dx, dy);
+      this.drawScene(ctx);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+    }
+    this.fx.drawText(ctx, S, dx, dy);
+  }
+
+  drawScene(s) {
+    s.drawImage(this.frame, 0, 0, ART, ART);
+    this.look.markers(s, { time: this.time, selected: this.selected, queue: this.queue, hint: this.hint });
 
     s.save();
     s.beginPath();
-    s.rect(PAD, PAD, B.SIZE * T, B.SIZE * T);
+    s.rect(PAD, PAD, BOARD, BOARD);
     s.clip();
     const sel = this.selected && this.viewGrid()[this.selected.r][this.selected.c];
     B.forEachCell(this.grid, (p) => { if (p && p !== sel) this.drawPiece(s, p); });
@@ -655,52 +660,6 @@ export class Game {
     s.restore();
 
     this.fx.drawScene(s, ART, ART);
-
-    const ctx = this.ctx;
-    const { S, ox, oy } = this.layout;
-    ctx.imageSmoothingEnabled = false;
-    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    const dx = ox + this.fx.offset.x * S, dy = oy + this.fx.offset.y * S;
-    ctx.drawImage(this.scene, dx, dy, ART * S, ART * S);
-    this.fx.drawText(ctx, S, dx, dy);
-  }
-
-  drawMarkers(s) {
-    const t = this.time;
-    const bracket = (r, c, col, gap) => {
-      const x = PAD + c * T - gap, y = PAD + r * T - gap, w = T + gap * 2;
-      s.fillStyle = col;
-      for (const [bx, by, sx, sy] of [[x, y, 1, 1], [x + w - 1, y, -1, 1], [x, y + w - 1, 1, -1], [x + w - 1, y + w - 1, -1, -1]]) {
-        s.fillRect(bx, by, 4 * sx || 1, 1 * sy || 1);
-        s.fillRect(bx, by, 1 * sx || 1, 4 * sy || 1);
-      }
-    };
-    if (this.selected) {
-      const { r, c } = this.selected;
-      s.fillStyle = 'rgba(255,255,255,0.18)';
-      s.fillRect(PAD + c * T, PAD + r * T, T, T);
-      bracket(r, c, Math.floor(t / 180) % 2 ? '#ffffff' : this.theme.board.frame, 0);
-    }
-    // queued swaps waiting their turn: small corner ticks, brighter for the next one up
-    this.queue.forEach((m, i) => {
-      s.fillStyle = i === 0 ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.45)';
-      for (const { r, c } of [m.a, m.b]) {
-        const x = PAD + c * T, y = PAD + r * T;
-        for (const [px, py, dx, dy] of [[x + 1, y + 1, 1, 1], [x + T - 2, y + 1, -1, 1], [x + 1, y + T - 2, 1, -1], [x + T - 2, y + T - 2, -1, -1]]) {
-          s.fillRect(px, py, 1, 1);
-          s.fillRect(px + dx, py, 1, 1);
-          s.fillRect(px, py + dy, 1, 1);
-        }
-      }
-    });
-    if (this.hint) {
-      const pulse = Math.floor((t - this.hint.since) / 260) % 2;
-      for (const cell of [this.hint.a, this.hint.b]) {
-        s.fillStyle = pulse ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.08)';
-        s.fillRect(PAD + cell.c * T, PAD + cell.r * T, T, T);
-        bracket(cell.r, cell.c, pulse ? '#ffffff' : this.theme.board.frame, pulse);
-      }
-    }
   }
 
   drawPiece(s, p, selected = false) {
@@ -749,9 +708,11 @@ export class Game {
       }
     }
 
-    const w = Math.max(1, Math.round(T * sx)), h = Math.max(1, Math.round(T * sy));
-    const dx = Math.round(x + (T - w) / 2);
-    const dy = Math.round(anchorBottom ? y + (T - h) : y + (T - h) / 2);
+    // the pixel look keeps everything on whole art pixels; the others move freely
+    const snap = this.look.pixel ? Math.round : (v) => v;
+    const w = Math.max(1, snap(T * sx)), h = Math.max(1, snap(T * sy));
+    const dx = snap(x + (T - w) / 2);
+    const dy = snap(anchorBottom ? y + (T - h) : y + (T - h) / 2);
 
     // every layer of the sprite goes through the same (possibly rotated) blit
     const blit = (image, a, ox = 0, oy = 0) => {
@@ -764,8 +725,10 @@ export class Game {
       s.restore();
     };
 
-    if ((special === B.NOVA || special === B.CROSS) && !p.pop) this.drawSpecialBack(s, p, dx, dy, w, h);
-    blit(shadow, alpha * 0.35, 1, 1);
+    const glowing = special === B.NOVA || special === B.CROSS;
+    if (glowing && !p.pop) this.look.specialBack(s, p, dx, dy, w, h, t);
+    const shade = this.look.shadow;
+    blit(shadow, alpha * shade.alpha, shade.dx, shade.dy);
     blit(img, alpha);
 
     if (!p.pop && special !== B.PRISM) {
@@ -774,103 +737,13 @@ export class Game {
       if (cycle < 0.5) blit(frames[Math.floor((cycle / 0.5) * frames.length)], 0.75);
     }
 
-    if (special === B.NOVA || special === B.CROSS) this.drawSpecialAura(s, p, dx, dy, w, h);
+    if (glowing) {
+      blit(white, Math.max(0, 0.15 + 0.2 * Math.sin(sec * 8 + p.phase * 6)));
+      s.globalAlpha = 1;
+      this.look.specialFront(s, p, dx, dy, w, h, t);
+    }
     if (flash > 0) blit(white, Math.min(1, flash) * alpha);
     s.globalAlpha = 1;
-    if (!p.pop && !p.fall) this.drawTwinkle(s, p, dx, dy, w, h);
-  }
-
-  // A little four-point star that keeps popping up on a bright spot of each
-  // piece, so the board always glitters a bit.
-  drawTwinkle(s, p, dx, dy, w, h) {
-    const PERIOD = 2.2, SHOW = 0.55;
-    const cyc = this.time / 1000 / PERIOD + p.phase * 7;
-    const n = Math.floor(cyc);
-    const k = ((cyc - n) * PERIOD) / SHOW;
-    if (k >= 1) return;
-    const spots = p.special === B.PRISM ? this.sprites.prismSpots : this.sprites.pieces[p.type].spots;
-    const [sx, sy] = spots[Math.abs((p.id * 7919 + n * 104729) | 0) % spots.length];
-    const x = Math.round(dx + (sx * w) / T), y = Math.round(dy + (sy * h) / T);
-    const arm = k < 0.2 ? 0 : k < 0.45 ? 1 : k < 0.75 ? 2 : 1;
-    const tint = p.special === B.PRISM ? '#fff6c8' : this.sprites.ramps[p.type][5];
-    s.fillStyle = tint;
-    for (let i = 1; i <= arm; i++) {
-      s.fillRect(x - i, y, 1, 1); s.fillRect(x + i, y, 1, 1);
-      s.fillRect(x, y - i, 1, 1); s.fillRect(x, y + i, 1, 1);
-    }
-    s.fillStyle = '#ffffff';
-    s.fillRect(x, y, 1, 1);
-    if (arm === 2) { s.fillRect(x - 1, y, 3, 1); s.fillRect(x, y - 1, 1, 3); }
-  }
-
-  // glow drawn underneath a special piece so it reads at a glance
-  drawSpecialBack(s, p, dx, dy, w, h) {
-    const t = this.time / 1000;
-    const ramp = this.sprites.ramps[p.type];
-    const mx = Math.round(dx + w / 2), my = Math.round(dy + h / 2);
-    const pulse = 0.5 + 0.5 * Math.sin(t * 6 + p.phase * 6);
-    if (p.special === B.NOVA) {
-      const rad = 8 + Math.round(pulse * 2);
-      s.fillStyle = ramp[3];
-      s.globalAlpha = 0.55;
-      for (let y = -rad; y <= rad; y++) {
-        const half = Math.round(Math.sqrt(rad * rad - y * y));
-        s.fillRect(mx - half, my + y, half * 2, 1);
-      }
-      s.globalAlpha = 1;
-      s.fillStyle = ramp[5];
-      const steps = 40;
-      for (let i = 0; i < steps; i++) {
-        if ((i + Math.floor(t * 12)) % 4 === 0) continue;
-        const a = (i / steps) * Math.PI * 2;
-        s.fillRect(Math.round(mx + Math.cos(a) * rad), Math.round(my + Math.sin(a) * rad), 1, 1);
-      }
-    } else {
-      s.globalAlpha = 0.35 + pulse * 0.35;
-      s.fillStyle = ramp[4];
-      s.fillRect(dx - 1, my - 2, w + 2, 4);
-      s.fillRect(mx - 2, dy - 1, 4, h + 2);
-      s.fillStyle = '#ffffff';
-      s.fillRect(dx - 1, my - 1, w + 2, 1);
-      s.fillRect(mx - 1, dy - 1, 1, h + 2);
-      s.globalAlpha = 1;
-    }
-  }
-
-  drawSpecialAura(s, p, dx, dy, w, h) {
-    const t = this.time / 1000;
-    const ramp = this.sprites.ramps[p.type];
-    const mx = dx + w / 2, my = dy + h / 2;
-    const glow = 0.15 + 0.2 * Math.sin(t * 8 + p.phase * 6);
-    s.globalAlpha = Math.max(0, glow);
-    s.drawImage(this.sprites.pieces[p.type].white, dx, dy, w, h);
-    s.globalAlpha = 1;
-    if (p.special === B.NOVA) {
-      // four sparks orbiting the piece
-      for (let i = 0; i < 4; i++) {
-        const a = t * 3.5 + i * (Math.PI / 2);
-        const ox = Math.round(mx + Math.cos(a) * 8), oy = Math.round(my + Math.sin(a) * 8);
-        s.fillStyle = INK;
-        s.fillRect(ox - 2, oy - 1, 5, 3); s.fillRect(ox - 1, oy - 2, 3, 5);
-        s.fillStyle = ramp[5];
-        s.fillRect(ox - 1, oy, 3, 1); s.fillRect(ox, oy - 1, 1, 3);
-        s.fillStyle = '#ffffff';
-        s.fillRect(ox, oy, 1, 1);
-      }
-    } else {
-      // arrows pulsing outward along the row and column it will clear
-      const k = (t * 2.5) % 1;
-      const d = Math.round(7 + k * 2);
-      for (const [ax, ay] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
-        const px = Math.round(mx + ax * d), py = Math.round(my + ay * d);
-        const pts = [[ax, ay], [0, 0], [-ay, ax], [ay, -ax], [-ay * 2 - ax, ax * 2 - ay], [ay * 2 - ax, -ax * 2 - ay]];
-        s.fillStyle = INK;
-        for (const [qx, qy] of pts) s.fillRect(px + qx - 1, py + qy - 1, 3, 3);
-        s.fillStyle = k < 0.5 ? '#ffffff' : ramp[5];
-        for (const [qx, qy] of pts) s.fillRect(px + qx, py + qy, 1, 1);
-      }
-    }
+    if (!p.pop && !p.fall) this.look.twinkle(s, p, dx, dy, w, h, t);
   }
 }
-
-export { ART };
