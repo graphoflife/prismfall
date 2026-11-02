@@ -77,7 +77,20 @@ const PEAR = (() => {
 const HEX = [[0, -0.98], [0.86, -0.49], [0.86, 0.49], [0, 0.98], [-0.86, 0.49], [-0.86, -0.49]];
 const KITE = [[0, -1], [0.94, 0], [0, 1], [-0.94, 0]];
 const OCTA = [[-0.52, -0.96], [0.52, -0.96], [0.76, -0.72], [0.76, 0.72], [0.52, 0.96], [-0.52, 0.96], [-0.76, 0.72], [-0.76, -0.72]];
-const TRI = [[-1, -0.72], [1, -0.72], [0, 0.98]];
+// A trillion with gently bulging sides, so that it reads as a soft shield rather than a spike.
+const TRI = (() => {
+  const corners = [[-0.96, -0.68], [0.96, -0.68], [0, 0.94]];
+  const out = [];
+  corners.forEach((p, i) => {
+    const q = corners[(i + 1) % 3];
+    const ex = q[0] - p[0], ey = q[1] - p[1], len = Math.hypot(ex, ey);
+    for (let k = 0; k < 8; k++) {
+      const t = k / 8, bulge = 0.09 * Math.sin(t * Math.PI);
+      out.push([p[0] + ex * t + (ey / len) * bulge, p[1] + ey * t - (ex / len) * bulge]);
+    }
+  });
+  return out;
+})();
 const ROUND = circle(0.96);
 
 // Softens every sharp corner of an outline: the stretch within r of the corner,
@@ -138,7 +151,7 @@ function nearestOnOutline(poly, p) {
 
 // A finished cut: rounded outline, with the facet anchors moved onto it.
 function cut(poly, center, anchors, rest) {
-  const outline = roundCorners(poly);
+  const outline = roundCorners(poly, rest.rounding);
   const verts = anchors(outline).map((v) => nearestOnOutline(outline, v));
   const out = { poly: outline, center, verts, ...rest };
   if (rest.comicVerts) out.comicVerts = rest.comicVerts.map((v) => nearestOnOutline(outline, v));
@@ -162,11 +175,16 @@ export const shapes = [
   cut(KITE, [0, 0], () => withMidpoints(KITE), { table: 0.5 }),
   cut(OCTA, [0, 0], () => OCTA, { step: true, coarse: 1, table: 0.46 }),
   cut(ROUND, [0, 0], (o) => rayAnchors(o, [0, 0], 16), { table: 0.56 }),
-  cut(TRI, [0, -0.15], () => withMidpoints(TRI, 3), { coarse: 3, table: 0.48 }),
+  cut(TRI, [0, -0.15], () => [0, 8, 16].flatMap((i) => [TRI[i], TRI[i + 4]]), { coarse: 1, rounding: 0.36, table: 0.5 }),
   cut(PEAR, [0, 0.14], (o) => rayAnchors(o, [0, 0.14], 12), { shine: 0.93, table: 0.5 }),
 ];
 
 function scaled(p, center, k) { return lerp(center, p, k); }
+
+// The few big facets a cut is simplified to, for comic art and for the 3D model.
+export function bigFacetAnchors(shape) {
+  return shape.comicVerts ?? shape.verts.filter((_, i) => i % (shape.coarse ?? 2) === 0);
+}
 
 // Splits a cut into crown facets: for each outline edge, the outer "girdle"
 // triangle plus the two inner triangles that meet the table.
@@ -393,8 +411,7 @@ function paintComic(ctx, shape, tone) {
   const [cx, cy] = shape.center;
   const flat = (v, facet) => tone(v < 0.3 ? 1 : v < 0.5 ? 2 : v < 0.74 ? 3 : 4, facet);
   // comic art uses far fewer, bigger facets than the real cut
-  const coarse = { ...shape, verts: shape.comicVerts ?? shape.verts.filter((_, i) => i % (shape.coarse ?? 2) === 0) };
-  const segs = crownSegments(coarse);
+  const segs = crownSegments({ ...shape, verts: bigFacetAnchors(shape) });
 
   // heavier ink on the shadow side
   ctx.save();
@@ -489,7 +506,7 @@ const REAL_COLOURS = [
   (l) => hsl(0.085, 0.95, l),                // amber
   (l) => hsl(0.135, 0.95, l),                // citrine
   (l) => hsl(0.405, 0.85, l),                // emerald
-  (l) => hsl(0.605, 0.9, l),                 // sapphire
+  (l) => hsl(0.565, 0.92, 0.14 + l * 0.86),  // light blue topaz
   (l) => hsl(0.775, 0.8, l),                 // amethyst
   (l, i) => (i % 5 === 2 && l > 0.5 ? hsl(i * 0.17, 0.75, 0.82) : hsl(0.6, 0.3, 0.38 + Math.max(0, Math.min(1, l)) * 0.62)), // diamond with fire
 ];

@@ -15,7 +15,7 @@ import { deflateSync } from 'node:zlib';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { shapes } from '../js/gems.js';
+import { shapes, bigFacetAnchors } from '../js/gems.js';
 
 const FRAMES = 32, COLS = 8;       // keep in sync with BAKED in js/gems.js
 const SIZE = 128, SUPER = 3;
@@ -26,12 +26,13 @@ const CAMERA = 3.2;                // viewing distance; rays fan out, so a light
 
 // ior: refractive index (three values = per colour, which splits light into "fire").
 // colour: what fraction of each colour survives one unit of travel inside the stone.
+// gain: extra brightness for stones that would otherwise read as dull on the dark tray.
 const GEMS = [
   { name: 'ruby', shape: 0, ior: 1.77, colour: [0.93, 0.03, 0.08] },
   { name: 'amber', shape: 1, ior: 1.62, colour: [0.98, 0.46, 0.04] },
   { name: 'citrine', shape: 2, ior: 1.55, colour: [0.97, 0.74, 0.04] },
   { name: 'emerald', shape: 3, ior: 1.58, colour: [0.03, 0.72, 0.2] },
-  { name: 'sapphire', shape: 4, ior: 1.77, colour: [0.1, 0.3, 0.98] },
+  { name: 'blue topaz', shape: 4, ior: 1.62, colour: [0.1, 0.56, 1], gain: 1.7 },
   { name: 'amethyst', shape: 5, ior: 1.55, colour: [0.64, 0.16, 0.94] },
   { name: 'diamond', shape: 6, ior: [2.36, 2.42, 2.52], colour: [0.99, 0.99, 1] },
   { name: 'prism', shape: 4, ior: [1.9, 2.1, 2.4], colour: [1, 1, 1], rainbow: true },
@@ -71,14 +72,17 @@ function buildMesh(shape) {
   const scaled = (p, k) => [cx + (p[0] - cx) * k, cy + (p[1] - cy) * k];
   const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
   const at = (p, z) => [p[0], p[1], z];
-  const anchors = shape.verts;
+  const anchors = bigFacetAnchors(shape);
   const n = anchors.length;
   const sections = girdleSections(shape.poly, anchors);
   const tris = [];
-  const add = (a, b, c) => tris.push([a, b, c]);
+  const add = (a, b, c, plane = null) => tris.push([a, b, c, plane]);
+  // A facet reaching a curved stretch of girdle is many thin triangles, but they all
+  // reflect like the one flat plane through its ends, so that it reads as a single facet.
   const fan = (i, apex) => {
     const g = sections[i];
-    for (let j = 0; j + 1 < g.length; j++) add(at(g[j], 0), at(g[j + 1], 0), apex);
+    const plane = [at(g[0], 0), at(g[g.length - 1], 0), apex];
+    for (let j = 0; j + 1 < g.length; j++) add(at(g[j], 0), at(g[j + 1], 0), apex, plane);
   };
 
   if (shape.step) {
@@ -96,26 +100,23 @@ function buildMesh(shape) {
         add(ring[ring.length - 1][i], ring[ring.length - 1][j], tip);
       }
     };
-    steps(rings([[0.84, 0.16], [0.66, 0.28], [shape.table, 0.36]]), [cx, cy, 0.36]);
-    steps(rings([[0.72, -0.28], [0.44, -0.54], [0.18, -0.72]]), [cx, cy, -0.82]);
+    steps(rings([[0.74, 0.22], [shape.table, 0.36]]), [cx, cy, 0.36]);
+    steps(rings([[0.56, -0.42]]), [cx, cy, -0.8]);
     return tris;
   }
 
+  // a clean cut: one flat table, one big facet per side above and below
   const crown = 0.34, depth = 0.86;
   const top = [cx, cy, crown], culet = [cx, cy, -depth];
-  const lower = anchors.map((a, i) => at(scaled(mid(a, anchors[(i + 1) % n]), 0.52), -depth * 0.5));
   anchors.forEach((a, i) => {
-    const j = (i + 1) % n, b = anchors[j];
+    const b = anchors[(i + 1) % n];
     const t0 = scaled(a, shape.table), t1 = scaled(b, shape.table);
-    const m = at(scaled(mid(t0, t1), 1.26), crown * 0.6);
+    const m = at(mid(t0, t1), crown);
     add(top, at(t0, crown), at(t1, crown));          // table
-    add(at(t0, crown), at(t1, crown), m);            // star facet
-    add(at(a, 0), at(t0, crown), m);                 // bezel
+    add(at(a, 0), at(t0, crown), m);                 // crown facet, down to the curved girdle
     add(at(b, 0), at(t1, crown), m);
-    fan(i, m);                                       // upper girdle
-    fan(i, lower[i]);                                // lower girdle
-    add(at(b, 0), lower[i], lower[j]);
-    add(lower[i], lower[j], culet);                  // pavilion main
+    fan(i, m);
+    fan(i, culet);                                   // pavilion facet
   });
   return tris;
 }
@@ -146,8 +147,8 @@ const PINS = (() => {
   const r = mulberry(4711);
   return Array.from({ length: 70 }, () => {
     const z = 0.3 + r() * 0.68, az = r() * Math.PI * 2, s = Math.sqrt(1 - z * z);
-    const size = (0.45 + r() * 0.75) * (Math.PI / 180);
-    return { d: [Math.cos(az) * s, Math.sin(az) * s, z], inner: Math.cos(size), outer: Math.cos(size * 1.6), i: 22 + r() * 50 };
+    const size = (0.2 + r() * 0.3) * (Math.PI / 180);
+    return { d: [Math.cos(az) * s, Math.sin(az) * s, z], inner: Math.cos(size), outer: Math.cos(size * 1.6), i: 50 + r() * 110 };
   });
 })();
 
@@ -159,8 +160,9 @@ let rainbowStudio = false;
 function env(x, y, z, softGain = 1, pinGain = 1) {
   let v;
   if (z <= 0) {
-    // dark velvet below, with a little bounce so that nothing is pure black
-    envR = 0.05; envG = 0.035; envB = 0.08;
+    // Light that leaks out through the back sees a softly lit tray, so that
+    // stones with a low refractive index don't get black holes.
+    envR = envG = envB = 0.2 + 0.1 * z;
     return;
   }
   const az = Math.atan2(y, x);
@@ -191,11 +193,12 @@ function env(x, y, z, softGain = 1, pinGain = 1) {
 
 // ------------------------------------------------------------------ tracer
 
-const STRIDE = 12;
+const STRIDE = 15;
 let TRI = new Float64Array(0), triCount = 0;
 let hitT = 0, hitI = -1;
 
-// Triangles of the stone in this frame's pose: corner, two edges, outward normal.
+// Triangles of the stone in this frame's pose: corner, two edges, outward geometric
+// normal (decides what a ray hits), outward facet normal (decides how light bends).
 function poseMesh(mesh, center, rx, ry) {
   const [cx, cy] = center;
   const sx = Math.sin(rx), kx = Math.cos(rx), sy = Math.sin(ry), ky = Math.cos(ry);
@@ -207,15 +210,21 @@ function poseMesh(mesh, center, rx, ry) {
   triCount = mesh.length;
   if (TRI.length < triCount * STRIDE) TRI = new Float64Array(triCount * STRIDE);
   const inner = turn([cx, cy, -0.15]);
-  mesh.forEach(([a, b, c], t) => {
+  mesh.forEach(([a, b, c, plane], t) => {
     const v0 = turn(a), v1 = turn(b), v2 = turn(c);
     const e1 = [v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]];
     const e2 = [v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]];
-    let n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
-    const m = Math.hypot(...n) || 1;
-    n = n.map((q) => q / m);
-    if (n[0] * (v0[0] - inner[0]) + n[1] * (v0[1] - inner[1]) + n[2] * (v0[2] - inner[2]) < 0) n = n.map((q) => -q);
-    TRI.set([...v0, ...e1, ...e2, ...n], t * STRIDE);
+    const [p0, p1, p2] = plane ? plane.map(turn) : [v0, v1, v2];
+    const outward = (u, w, at) => {
+      let n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]];
+      const m = Math.hypot(...n) || 1;
+      n = n.map((q) => q / m);
+      if (n[0] * (at[0] - inner[0]) + n[1] * (at[1] - inner[1]) + n[2] * (at[2] - inner[2]) < 0) n = n.map((q) => -q);
+      return n;
+    };
+    const f1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+    const f2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
+    TRI.set([...v0, ...e1, ...e2, ...outward(e1, e2, v0), ...outward(f1, f2, p0)], t * STRIDE);
   });
 }
 
@@ -259,7 +268,7 @@ function trace(x, y, ior, ar, ag, ab) {
   const vx = x / len, vy = y / len, vz = -CAMERA / len;
   if (!nearest(0, 0, CAMERA, vx, vy, vz, false)) return false;
   let px = vx * hitT, py = vy * hitT, pz = CAMERA + vz * hitT;
-  let nx = TRI[hitI + 9], ny = TRI[hitI + 10], nz = TRI[hitI + 11];
+  let nx = TRI[hitI + 12], ny = TRI[hitI + 13], nz = TRI[hitI + 14];
 
   // The mirror-like reflection off the surface. A studio photographer would hide
   // this: lamps mirrored in the flat table would veil the colour and show up as
@@ -277,13 +286,24 @@ function trace(x, y, ior, ar, ag, ab) {
   let dx = eta * vx + k * nx, dy = eta * vy + k * ny, dz = eta * vz + k * nz;
   let tr = 1 - F, tg = 1 - F, tb = 1 - F;
 
-  for (let b = 0; b < MAX_BOUNCES; b++) {
-    if (!nearest(px, py, pz, dx, dy, dz, true)) break;
+  for (let b = 0; b <= MAX_BOUNCES; b++) {
+    // light still inside after many bounces (or lost to the flat-facet shortcut)
+    // simply joins the surroundings, rather than leaving a black hole
+    if (b === MAX_BOUNCES || !nearest(px, py, pz, dx, dy, dz, true)) {
+      env(dx, dy, dz);
+      outR += tr * envR; outG += tg * envG; outB += tb * envB;
+      break;
+    }
     const d = hitT;
     tr *= Math.exp(-ar * d); tg *= Math.exp(-ag * d); tb *= Math.exp(-ab * d);
     px += dx * d; py += dy * d; pz += dz * d;
-    nx = TRI[hitI + 9]; ny = TRI[hitI + 10]; nz = TRI[hitI + 11];
-    const c = dx * nx + dy * ny + dz * nz; // leaving: c > 0
+    nx = TRI[hitI + 12]; ny = TRI[hitI + 13]; nz = TRI[hitI + 14];
+    let c = dx * nx + dy * ny + dz * nz; // leaving: c > 0
+    if (c <= 1e-4) {
+      // the flat facet normal disagrees with the real surface here, so use the real one
+      nx = TRI[hitI + 9]; ny = TRI[hitI + 10]; nz = TRI[hitI + 11];
+      c = dx * nx + dy * ny + dz * nz;
+    }
     const s2 = ior * ior * (1 - c * c);
     if (s2 < 1) {
       // part of the light escapes towards the viewer's side of the room
@@ -372,7 +392,8 @@ function renderFrame(gem, mesh, center, f, frames, size, ss, out, ox, oy) {
     }
   }
 
-  const tone = (c) => Math.round(255 * Math.min(1, (1 - Math.exp(-c * EXPOSURE)) ** (1 / 2.2)));
+  const exposure = EXPOSURE * (gem.gain ?? 1);
+  const tone = (c) => Math.round(255 * Math.min(1, (1 - Math.exp(-c * exposure)) ** (1 / 2.2)));
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const i = y * size + x;
