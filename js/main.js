@@ -5,7 +5,7 @@ import { Audio } from './audio.js';
 import { makeBackground } from './theme.js';
 import { STYLES, styleSprites } from './look.js';
 
-const KEY = 'pixelpop.v1';
+const KEY = 'pixelpop.v1'; // from the game's first name; kept so existing saves carry over
 const DEFAULTS = {
   settings: { style: 'realistic', sfx: true, music: true, vibrate: true },
   stats: { best: 0, bestMove: 0, bestChain: 0, bestLevel: 1, popped: 0, games: 1 },

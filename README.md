@@ -1,9 +1,9 @@
-# Pixel Pop! Zen
+# Prismfall
 
 A relaxing jewel match-3 game for the browser. Zen mode only:
 no timer, no game over, just combos, cascades and explosions.
 
-**Play it:** https://graphoflife.github.io/pixel-pop/
+**Play it:** https://graphoflife.github.io/prismfall/
 
 Works on desktop and phones (swipe or tap to swap). You can add it to your home
 screen and it runs like an app.

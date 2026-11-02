@@ -1,6 +1,6 @@
 {
-  "name": "Pixel Pop! Zen",
-  "short_name": "Pixel Pop",
+  "name": "Prismfall",
+  "short_name": "Prismfall",
   "description": "A relaxing pixel-art match-3 in zen mode.",
   "start_url": "./",
   "scope": "./",
