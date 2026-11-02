@@ -4,6 +4,7 @@ import { Game } from './game.js';
 import { Audio } from './audio.js';
 import { makeBackground } from './theme.js';
 import { STYLES, styleSprites } from './look.js';
+import { loadBakedGems } from './gems.js';
 
 const KEY = 'pixelpop.v1'; // from the game's first name; kept so existing saves carry over
 const DEFAULTS = {
@@ -95,6 +96,7 @@ function applyStyle(id) {
   document.body.dataset.style = id;
   document.fonts?.load(FONT_OF[id]);
   game.setStyle(id);
+  if (id === 'realistic') loadBakedGems();
   bg = makeBackground(id);
   sizeBackground();
   sizeParade();
@@ -108,9 +110,13 @@ function stylePreview(id) {
   c.width = (7 * 22 + 2) * k;
   c.height = 24 * k;
   const ctx = c.getContext('2d');
-  ctx.fillStyle = '#2a1650';
-  ctx.fillRect(0, 0, c.width, c.height);
-  for (let i = 0; i < 7; i++) ctx.drawImage(set.pieces[i].img, (2 + i * 22) * k, 2 * k, 20 * k, 20 * k);
+  const paint = () => {
+    ctx.fillStyle = '#2a1650';
+    ctx.fillRect(0, 0, c.width, c.height);
+    for (let i = 0; i < 7; i++) ctx.drawImage(set.pieces[i].img, (2 + i * 22) * k, 2 * k, 20 * k, 20 * k);
+  };
+  paint();
+  if (id === 'realistic') loadBakedGems().then(paint);
   return c;
 }
 
@@ -243,10 +249,12 @@ function drawParade(t) {
   for (let i = 0; i < 7; i++) {
     const wave = Math.sin(t * 4 + i * 0.8) * 4;
     const y = 8 + (crisp ? Math.round(wave) : wave);
+    const { frames } = set.pieces[i];
+    const img = frames ? frames[Math.floor(t * 9 + i * 5) % frames.length] : set.pieces[i].img;
     paradeCtx.globalAlpha = 0.5;
     paradeCtx.drawImage(set.pieces[i].shadow, 4 + i * 23 + 1, y + 1, 20, 20);
     paradeCtx.globalAlpha = 1;
-    paradeCtx.drawImage(set.pieces[i].img, 4 + i * 23, y, 20, 20);
+    paradeCtx.drawImage(img, 4 + i * 23, y, 20, 20);
   }
 }
 

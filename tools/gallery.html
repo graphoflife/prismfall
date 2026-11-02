@@ -17,8 +17,9 @@
 <div id="out"></div>
 <script type="module">
   import { pixelSprites } from '../js/sprites.js';
-  import { smoothSprites } from '../js/gems.js';
+  import { smoothSprites, loadBakedGems } from '../js/gems.js';
   const out = document.getElementById('out');
+  await loadBakedGems();
   const sets = { realistic: smoothSprites('realistic'), comic: smoothSprites('comic'), pixel: pixelSprites() };
   for (const [name, set] of Object.entries(sets)) {
     const h = document.createElement('h2'); h.textContent = name; out.appendChild(h);

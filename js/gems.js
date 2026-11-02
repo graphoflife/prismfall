@@ -80,6 +80,71 @@ const OCTA = [[-0.52, -0.96], [0.52, -0.96], [0.76, -0.72], [0.76, 0.72], [0.52,
 const TRI = [[-1, -0.72], [1, -0.72], [0, 0.98]];
 const ROUND = circle(0.96);
 
+// Softens every sharp corner of an outline: the stretch within r of the corner,
+// measured along the outline, becomes a smooth curve. Real stones have no
+// needle-sharp points either.
+export function roundCorners(poly, r = 0.15) {
+  const n = poly.length;
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const turn = (i) => {
+    const a = poly[(i + n - 1) % n], b = poly[i], c = poly[(i + 1) % n];
+    const u = Math.atan2(b[1] - a[1], b[0] - a[0]), v = Math.atan2(c[1] - b[1], c[0] - b[0]);
+    return Math.abs(Math.atan2(Math.sin(v - u), Math.cos(v - u)));
+  };
+  const skipped = new Set();
+  // walks r along the outline, marking the vertices that the curve replaces
+  const walk = (i, dir) => {
+    let left = r, j = i;
+    for (;;) {
+      const k = (j + dir + n) % n;
+      const d = dist(poly[j], poly[k]);
+      if (d >= left) return lerp(poly[j], poly[k], left / d);
+      left -= d;
+      j = k;
+      skipped.add(j);
+    }
+  };
+  const curves = new Map();
+  for (let i = 0; i < n; i++) {
+    if (skipped.has(i) || turn(i) < 0.3) continue;
+    const a = walk(i, -1), b = walk(i, 1);
+    const pts = [];
+    for (let q = 0; q <= 8; q++) {
+      const k = q / 8;
+      pts.push(lerp(lerp(a, poly[i], k), lerp(poly[i], b, k), k));
+    }
+    curves.set(i, pts);
+  }
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    if (curves.has(i)) out.push(...curves.get(i));
+    else if (!skipped.has(i)) out.push(poly[i]);
+  }
+  return out;
+}
+
+function nearestOnOutline(poly, p) {
+  let best = poly[0], bestD = Infinity;
+  poly.forEach((a, i) => {
+    const b = poly[(i + 1) % poly.length];
+    const ex = b[0] - a[0], ey = b[1] - a[1];
+    const k = Math.max(0, Math.min(1, ((p[0] - a[0]) * ex + (p[1] - a[1]) * ey) / (ex * ex + ey * ey || 1)));
+    const q = [a[0] + ex * k, a[1] + ey * k];
+    const d = Math.hypot(q[0] - p[0], q[1] - p[1]);
+    if (d < bestD) { bestD = d; best = q; }
+  });
+  return best;
+}
+
+// A finished cut: rounded outline, with the facet anchors moved onto it.
+function cut(poly, center, anchors, rest) {
+  const outline = roundCorners(poly);
+  const verts = anchors(outline).map((v) => nearestOnOutline(outline, v));
+  const out = { poly: outline, center, verts, ...rest };
+  if (rest.comicVerts) out.comicVerts = rest.comicVerts.map((v) => nearestOnOutline(outline, v));
+  return out;
+}
+
 // The heart's landmarks, clockwise from the dip: comic facets radiate from these
 // so they reach right into the lobes.
 const HEART_LANDMARKS = (() => {
@@ -91,14 +156,14 @@ const HEART_LANDMARKS = (() => {
   return [dip, top, side, tip, [-side[0], side[1]], [-top[0], top[1]]];
 })();
 
-const shapes = [
-  { poly: HEART, center: [0, -0.06], verts: rayAnchors(HEART, [0, -0.06], 12), comicVerts: HEART_LANDMARKS, shine: 0.95, table: 0.48 },
-  { poly: HEX, center: [0, 0], verts: withMidpoints(HEX), table: 0.54 },
-  { poly: KITE, center: [0, 0], verts: withMidpoints(KITE), table: 0.5 },
-  { poly: OCTA, center: [0, 0], verts: OCTA, step: true, coarse: 1, table: 0.46 },
-  { poly: ROUND, center: [0, 0], verts: rayAnchors(ROUND, [0, 0], 16), table: 0.56 },
-  { poly: TRI, center: [0, -0.15], verts: withMidpoints(TRI, 3), coarse: 3, table: 0.48 },
-  { poly: PEAR, center: [0, 0.14], verts: rayAnchors(PEAR, [0, 0.14], 12), shine: 0.93, table: 0.5 },
+export const shapes = [
+  cut(HEART, [0, -0.06], (o) => rayAnchors(o, [0, -0.06], 12), { comicVerts: HEART_LANDMARKS, shine: 0.95, table: 0.48 }),
+  cut(HEX, [0, 0], () => withMidpoints(HEX), { table: 0.54 }),
+  cut(KITE, [0, 0], () => withMidpoints(KITE), { table: 0.5 }),
+  cut(OCTA, [0, 0], () => OCTA, { step: true, coarse: 1, table: 0.46 }),
+  cut(ROUND, [0, 0], (o) => rayAnchors(o, [0, 0], 16), { table: 0.56 }),
+  cut(TRI, [0, -0.15], () => withMidpoints(TRI, 3), { coarse: 3, table: 0.48 }),
+  cut(PEAR, [0, 0.14], (o) => rayAnchors(o, [0, 0.14], 12), { shine: 0.93, table: 0.5 }),
 ];
 
 function scaled(p, center, k) { return lerp(center, p, k); }
@@ -142,9 +207,9 @@ function stepRings(shape) {
 
 // ---------------------------------------------------------------- drawing
 
-function newCanvas() {
+function newCanvas(size = SIZE) {
   const c = document.createElement('canvas');
-  c.width = c.height = SIZE;
+  c.width = c.height = size;
   return c;
 }
 
@@ -180,7 +245,7 @@ export function star4(ctx, x, y, r, waist = 0.18) {
 }
 
 function tablePoints(shape) {
-  return shape.verts.map((v) => scaled(v, shape.center, shape.table));
+  return shape.poly.map((p) => scaled(p, shape.center, shape.table));
 }
 
 // -------------------------------------------------------------- realistic
@@ -330,7 +395,6 @@ function paintComic(ctx, shape, tone) {
   // comic art uses far fewer, bigger facets than the real cut
   const coarse = { ...shape, verts: shape.comicVerts ?? shape.verts.filter((_, i) => i % (shape.coarse ?? 2) === 0) };
   const segs = crownSegments(coarse);
-  const curved = shape.poly.length > 40;
 
   // heavier ink on the shadow side
   ctx.save();
@@ -369,8 +433,8 @@ function paintComic(ctx, shape, tone) {
   }
 
   // table in flat light with a hard diagonal shadow
-  // curved cuts keep their curve in the table: a heart has a little heart in it
-  const table = curved ? shape.poly.map((p) => scaled(p, shape.center, shape.table)) : tablePoints(coarse);
+  // the table repeats the outline: a heart has a little heart in it
+  const table = tablePoints(shape);
   fillPoly(ctx, table, tone(4, -1));
   ctx.save();
   polyPath(ctx, table);
@@ -390,7 +454,7 @@ function paintComic(ctx, shape, tone) {
 
   // a bold cartoon shine following the upper-left edge
   const inner = shape.poly.map((p) => scaled(p, shape.center, 0.8));
-  const dense = curved ? inner : withMidpoints(inner, 8);
+  const dense = withMidpoints(inner, 4);
   const reach = shape.shine ?? 0.8;
   const toLight = (p) => {
     const dx = p[0] - cx, dy = p[1] - cy, d = Math.hypot(dx, dy) || 1;
@@ -455,25 +519,26 @@ function paintPrism(style, phase) {
 }
 
 function silhouette(src, colour) {
-  const c = newCanvas();
+  const c = newCanvas(src.width);
   const ctx = c.getContext('2d');
   ctx.drawImage(src, 0, 0);
   ctx.globalCompositeOperation = 'source-in';
   ctx.fillStyle = colour;
-  ctx.fillRect(0, 0, SIZE, SIZE);
+  ctx.fillRect(0, 0, src.width, src.width);
   return c;
 }
 
 // Realistic stones cast a soft shadow, comic ones a hard ink one.
 function shadowOf(src, soft) {
   if (!soft) return silhouette(src, INK);
-  const c = newCanvas();
+  const size = src.width;
+  const c = newCanvas(size);
   const ctx = c.getContext('2d');
   // drawn off-canvas so that only its blurred shadow lands on the sprite
   ctx.shadowColor = '#07010f';
-  ctx.shadowBlur = SIZE * 0.05;
-  ctx.shadowOffsetX = SIZE * 2;
-  ctx.drawImage(src, -SIZE * 2, 0);
+  ctx.shadowBlur = size * 0.05;
+  ctx.shadowOffsetX = size * 2;
+  ctx.drawImage(src, -size * 2, 0);
   return c;
 }
 
@@ -497,13 +562,14 @@ function shineFrames(src, hard, frames = 7) {
 
 // The brightest spots of a sprite, as 0..1 fractions: where sparkles appear.
 function brightSpots(src) {
-  const d = src.getContext('2d').getImageData(0, 0, SIZE, SIZE).data;
+  const size = src.width;
+  const d = src.getContext('2d').getImageData(0, 0, size, size).data;
   const pts = [];
-  for (let y = 0; y < SIZE; y += 6) {
-    for (let x = 0; x < SIZE; x += 6) {
-      const i = (y * SIZE + x) * 4;
+  for (let y = 0; y < size; y += 6) {
+    for (let x = 0; x < size; x += 6) {
+      const i = (y * size + x) * 4;
       if (d[i + 3] < 250) continue;
-      pts.push([x / SIZE, y / SIZE, 0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2]]);
+      pts.push([x / size, y / size, 0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2]]);
     }
   }
   pts.sort((a, b) => b[2] - a[2]);
@@ -531,4 +597,50 @@ export function smoothSprites(style) {
   };
   cache.set(style, set);
   return set;
+}
+
+// ------------------------------------------------------------- baked gems
+
+// The realistic gems are ray traced ahead of time (tools/bake-gems.mjs): one sprite
+// sheet per gem, recording it through a wobble in a studio of lights. The painted
+// stones above stand in until these arrive, and for good if they cannot be fetched.
+const BAKED = { gems: 7, frames: 32, cols: 8, size: 128 };
+const SHEETS = new URL('../assets/gems/', import.meta.url);
+
+function sliceSheet(sheet) {
+  return Array.from({ length: BAKED.frames }, (_, f) => {
+    const c = newCanvas(BAKED.size);
+    const x = (f % BAKED.cols) * BAKED.size, y = Math.floor(f / BAKED.cols) * BAKED.size;
+    c.getContext('2d').drawImage(sheet, x, y, BAKED.size, BAKED.size, 0, 0, BAKED.size, BAKED.size);
+    return c;
+  });
+}
+
+function fetchSheet(i) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = new URL(`${i}.webp`, SHEETS).href;
+  });
+}
+
+let bakedLoad = null;
+
+// Upgrades the realistic set in place once the sheets have loaded.
+export function loadBakedGems() {
+  if (bakedLoad) return bakedLoad;
+  bakedLoad = Promise.all(Array.from({ length: BAKED.gems + 1 }, (_, i) => fetchSheet(i))).then((sheets) => {
+    const set = smoothSprites('realistic');
+    sheets.forEach((sheet, i) => {
+      const frames = sliceSheet(sheet);
+      if (i < BAKED.gems) {
+        Object.assign(set.pieces[i], { frames, img: frames[0], white: silhouette(frames[0], '#ffffff'), shadow: shadowOf(frames[0], true), spots: brightSpots(frames[0]) });
+      } else {
+        Object.assign(set, { prism: frames, prismWhite: silhouette(frames[0], '#ffffff'), prismShadow: shadowOf(frames[0], true), prismSpots: brightSpots(frames[0]) });
+      }
+    });
+    set.baked = true;
+  }).catch(() => { /* keep the painted stones */ });
+  return bakedLoad;
 }

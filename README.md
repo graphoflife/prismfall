@@ -11,7 +11,7 @@ screen and it runs like an app.
 ## Features
 
 - **Three graphics styles**, switchable any time in the menu, even mid-game:
-  - **Realistic**: cut stones with facets, soft light and glints, on velvet in a gold frame
+  - **Realistic**: ray-traced stones that really sparkle as they wobble, on velvet in a gold frame
   - **Comic**: bold ink, flat colour, halftone dots and "ZAP!" starbursts
   - **Pixel**: chunky retro pixel art
 - **Seven jewels**, all drawn in code with no image files: faceted heart, hexagon,
@@ -49,6 +49,14 @@ opening `index.html` directly from disk won't work.
 
 `tools/gallery.html` shows every gem sprite in every style at large size.
 
+The realistic gems are pre-rendered: they are 3D models traced with refraction,
+Fresnel reflection, total internal reflection and colour absorption, so the game
+just plays the frames back. To re-render them (needs Python with Pillow for WebP):
+
+```bash
+node tools/bake-gems.mjs
+```
+
 ## Tests
 
 The rules engine (`js/board.js`) is DOM-free and covered by Node tests:
@@ -64,7 +72,8 @@ node tests/board.test.mjs
 | `js/board.js` | Match finding, specials, chain reactions, move search, smart refill, shuffle |
 | `js/game.js` | Turn flow as awaited animations, the move queue, input and rendering |
 | `js/sprites.js` | Pixel-art painter for every gem |
-| `js/gems.js` | High-resolution gem painters for the realistic and comic styles |
+| `js/gems.js` | Gem outlines, the comic painter, and loading of the baked realistic gems |
+| `tools/bake-gems.mjs` | Ray tracer that renders the realistic gems into `assets/gems` ahead of time |
 | `js/look.js` | Per-style board drawing: frame, markers, special pieces, twinkles |
 | `js/theme.js` | Board colours, comic words and the animated background of each style |
 | `js/fx.js` | Particles, shockwaves, lightning, starbursts and score popups in each style |

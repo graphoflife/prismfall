@@ -6,6 +6,7 @@ import { THEME, CHAIN_WORDS } from './theme.js';
 import { T, PAD, BOARD, ART, makeLook } from './look.js';
 import { Fx } from './fx.js';
 
+const BAKED_FPS = 9;               // playback speed of the ray-traced gems
 const GRAVITY = 60;               // cells / s^2
 const HINT_AFTER = 7000;          // ms of idling before a hint appears
 
@@ -665,7 +666,20 @@ export class Game {
   drawPiece(s, p, selected = false) {
     const t = this.time;
     const special = p.special;
-    const img = special === B.PRISM ? this.sprites.prism[Math.floor(t / 70) % this.sprites.prism.length] : this.sprites.pieces[p.type]?.img;
+    const sec = t / 1000;
+    const set = this.sprites;
+    // ray-traced gems play their recorded wobble, blending from frame to frame;
+    // the phase keeps the board from flashing in step
+    const frames = special === B.PRISM ? set.prism : set.pieces[p.type]?.frames;
+    let img, nextImg = null, blend = 0;
+    if (set.baked) {
+      const f = sec * BAKED_FPS + p.phase * frames.length, i = Math.floor(f);
+      img = frames[i % frames.length];
+      nextImg = frames[(i + 1) % frames.length];
+      blend = f - i;
+    } else {
+      img = special === B.PRISM ? set.prism[Math.floor(t / 70) % set.prism.length] : set.pieces[p.type]?.img;
+    }
     if (!img) return;
     const white = special === B.PRISM ? this.sprites.prismWhite : this.sprites.pieces[p.type].white;
     const shadow = special === B.PRISM ? this.sprites.prismShadow : this.sprites.pieces[p.type].shadow;
@@ -673,9 +687,8 @@ export class Game {
     let x = PAD + p.x * T, y = PAD + p.y * T;
     let sx = 1, sy = 1, flash = 0, alpha = 1, anchorBottom = true;
 
-    // every gem is always gently rocking
-    const sec = t / 1000;
-    const angle = !p.pop && !p.fall ? Math.sin(sec * 1.7 + p.phase * 6.283) * 0.08 : 0;
+    // drawn gems are always gently rocking; baked ones already move by themselves
+    const angle = !set.baked && !p.pop && !p.fall ? Math.sin(sec * 1.7 + p.phase * 6.283) * 0.08 : 0;
 
     const sinceLand = t - p.land;
     if (sinceLand < 220) {
@@ -730,8 +743,9 @@ export class Game {
     const shade = this.look.shadow;
     blit(shadow, alpha * shade.alpha, shade.dx, shade.dy);
     blit(img, alpha);
+    if (nextImg) blit(nextImg, alpha * blend);
 
-    if (!p.pop && special !== B.PRISM) {
+    if (!set.baked && !p.pop && special !== B.PRISM) {
       const cycle = (sec + p.phase * 9) % 4;
       const frames = this.sprites.pieces[p.type].shine;
       if (cycle < 0.5) blit(frames[Math.floor((cycle / 0.5) * frames.length)], 0.75);
@@ -744,6 +758,6 @@ export class Game {
     }
     if (flash > 0) blit(white, Math.min(1, flash) * alpha);
     s.globalAlpha = 1;
-    if (!p.pop && !p.fall) this.look.twinkle(s, p, dx, dy, w, h, t);
+    if (!set.baked && !p.pop && !p.fall) this.look.twinkle(s, p, dx, dy, w, h, t);
   }
 }
