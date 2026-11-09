@@ -24,9 +24,18 @@ const cy = (r) => PAD + r * T + T / 2;
 export const levelTarget = (level) => 1000 + 500 * (level - 1);
 
 export class Game {
-  constructor({ canvas, audio, hooks }) {
+  constructor({ canvas, frameCanvas, audio, hooks }) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
+    // the frame and tiles never move, so they live on their own canvas underneath
+    // and are drawn once per resize instead of every frame
+    this.frameCanvas = frameCanvas;
+    this.wrap = canvas.parentElement;
+    this.shakeCss = '';
+    this.blend = true;    // cross-fade the ray-traced gems' frames (off on slow devices)
+    this.falling = 0;
+    this.sliding = 0;
+    this.lastLand = -1e9;
     this.audio = audio;
     this.hooks = hooks;
     this.scene = document.createElement('canvas');
@@ -173,9 +182,11 @@ export class Game {
       if (k >= 1) { this.tweens.splice(this.tweens.indexOf(tw), 1); tw.resolve(); }
     }
 
+    let sliding = 0;
     B.forEachCell(this.grid, (p) => {
       const s = p?.slide;
       if (!s) return;
+      sliding++;
       const k = clamp((this.time - s.start) / s.dur, 0, 1), e = ease.inOut(k);
       const vertical = s.ty !== null && !p.fall;
       p.x = k >= 1 ? s.tx : s.fx + (s.tx - s.fx) * e;
@@ -183,6 +194,7 @@ export class Game {
       p.lift = s.lift ? Math.sin(k * Math.PI) : 0;
       if (k >= 1) this.endSlide(p);
     });
+    this.sliding = sliding;
 
     let falling = 0;
     B.forEachCell(this.grid, (p) => {
@@ -194,10 +206,11 @@ export class Game {
       if (p.y >= f.ty) {
         p.y = f.ty;
         p.fall = null;
-        p.land = this.time;
+        p.land = this.lastLand = this.time;
         this.audio.land();
       } else falling++;
     });
+    this.falling = falling;
     if (!falling && this.fallWaiters.length) this.fallWaiters.splice(0).forEach((r) => r());
 
     for (const p of this.dying) {
@@ -612,20 +625,34 @@ export class Game {
   resize(cssW, cssH, dpr) {
     this.cssSize = [cssW, cssH, dpr];
     const w = Math.max(1, Math.round(cssW * dpr)), h = Math.max(1, Math.round(cssH * dpr));
-    this.canvas.width = w; this.canvas.height = h;
+    this.canvas.width = this.frameCanvas.width = w;
+    this.canvas.height = this.frameCanvas.height = h;
     let S = Math.min(w, h) / ART;
     // whole-number scaling keeps every art pixel the same size, but only when it
     // costs next to no space; otherwise fill the width (on phone screens the
     // odd one-device-pixel difference between art pixels is invisible)
     if (this.look.pixel && S >= 2 && Math.floor(S) / S > 0.985) S = Math.floor(S);
-    this.layout = { S, ox: Math.round((w - ART * S) / 2), oy: Math.round((h - ART * S) / 2) };
-    this.frame = this.look.buildFrame(S);
+    this.layout = { S, ox: Math.round((w - ART * S) / 2), oy: Math.round((h - ART * S) / 2), cssPerArt: S / dpr };
+    const f = this.frameCanvas.getContext('2d');
+    f.imageSmoothingEnabled = !this.look.pixel;
+    f.drawImage(this.look.buildFrame(S), this.layout.ox, this.layout.oy, ART * S, ART * S);
+  }
+
+  // Whether anything is moving beyond the gentle idle shimmer; the frame loop
+  // draws at full rate only then.
+  get lively() {
+    return this.busy || this.locked || !!this.drag || !!this.selected || this.queue.length > 0 || this.tweens.length > 0 ||
+      this.dying.length > 0 || this.falling > 0 || this.sliding > 0 || this.time - this.lastLand < 260 || this.fx.active();
   }
 
   render() {
-    const { S, ox, oy } = this.layout;
+    const { S, ox, oy, cssPerArt } = this.layout;
     const ctx = this.ctx;
-    const dx = ox + this.fx.offset.x * S, dy = oy + this.fx.offset.y * S;
+    const dx = ox, dy = oy;
+    // screen shake moves both canvases as one layer, which costs the compositor nothing
+    const { x: sx, y: sy } = this.fx.offset;
+    const shake = sx || sy ? `translate(${sx * cssPerArt}px,${sy * cssPerArt}px)` : '';
+    if (shake !== this.shakeCss) { this.shakeCss = shake; this.wrap.style.transform = shake; }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     if (this.look.pixel) {
@@ -637,9 +664,11 @@ export class Game {
       ctx.imageSmoothingEnabled = false;
       ctx.drawImage(this.scene, dx, dy, ART * S, ART * S);
     } else {
+      // gems arrive pre-scaled, so the cheap filter is enough for what still scales
       ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
+      ctx.imageSmoothingQuality = 'low';
       ctx.setTransform(S, 0, 0, S, dx, dy);
+      this.fx.pxPerArt = S;
       this.drawScene(ctx);
       ctx.setTransform(1, 0, 0, 1, 0, 0);
     }
@@ -647,7 +676,6 @@ export class Game {
   }
 
   drawScene(s) {
-    s.drawImage(this.frame, 0, 0, ART, ART);
     this.look.markers(s, { time: this.time, selected: this.selected, queue: this.queue, hint: this.hint });
 
     s.save();
@@ -668,21 +696,26 @@ export class Game {
     const special = p.special;
     const sec = t / 1000;
     const set = this.sprites;
-    // ray-traced gems play their recorded wobble, blending from frame to frame;
-    // the phase keeps the board from flashing in step
-    const frames = special === B.PRISM ? set.prism : set.pieces[p.type]?.frames;
+    // smooth styles draw screen-sized copies with the shadow built in; the pixel
+    // style draws its tiny sprites into the low-res scene, shadow separately
+    const fit = this.look.pixel ? null : this.look.fit(this.layout.S);
+    const entry = fit
+      ? (special === B.PRISM ? { frames: fit.prism, white: fit.prismWhite, shine: null } : fit.pieces[p.type])
+      : (special === B.PRISM ? { frames: set.prism, white: set.prismWhite, shadow: set.prismShadow } : set.pieces[p.type] && { frames: [set.pieces[p.type].img], ...set.pieces[p.type] });
+    if (!entry) return;
+    const { frames, white } = entry;
+    const shadow = fit ? null : entry.shadow;
     let img, nextImg = null, blend = 0;
     if (set.baked) {
+      // ray-traced gems play their recorded wobble, blending from frame to frame;
+      // the phase keeps the board from flashing in step
       const f = sec * BAKED_FPS + p.phase * frames.length, i = Math.floor(f);
       img = frames[i % frames.length];
-      nextImg = frames[(i + 1) % frames.length];
-      blend = f - i;
+      if (this.blend) { nextImg = frames[(i + 1) % frames.length]; blend = f - i; }
     } else {
-      img = special === B.PRISM ? set.prism[Math.floor(t / 70) % set.prism.length] : set.pieces[p.type]?.img;
+      img = special === B.PRISM ? frames[Math.floor(t / 70) % frames.length] : frames[0];
     }
     if (!img) return;
-    const white = special === B.PRISM ? this.sprites.prismWhite : this.sprites.pieces[p.type].white;
-    const shadow = special === B.PRISM ? this.sprites.prismShadow : this.sprites.pieces[p.type].shadow;
 
     let x = PAD + p.x * T, y = PAD + p.y * T;
     let sx = 1, sy = 1, flash = 0, alpha = 1, anchorBottom = true;
@@ -721,8 +754,10 @@ export class Game {
       }
     }
 
-    // the pixel look keeps everything on whole art pixels; the others move freely
-    const snap = this.look.pixel ? Math.round : (v) => v;
+    // the pixel look keeps everything on whole art pixels; the others snap to
+    // device pixels, so a resting gem is copied without any resampling
+    const S = this.layout.S;
+    const snap = this.look.pixel ? Math.round : (v) => Math.round(v * S) / S;
     const w = Math.max(1, snap(T * sx)), h = Math.max(1, snap(T * sy));
     const dx = snap(x + (T - w) / 2);
     const dy = snap(anchorBottom ? y + (T - h) : y + (T - h) / 2);
@@ -740,15 +775,16 @@ export class Game {
 
     const glowing = special === B.NOVA || special === B.CROSS;
     if (glowing && !p.pop) this.look.specialBack(s, p, dx, dy, w, h, t);
-    const shade = this.look.shadow;
-    blit(shadow, alpha * shade.alpha, shade.dx, shade.dy);
+    if (shadow) {
+      const shade = this.look.shadow;
+      blit(shadow, alpha * shade.alpha, shade.dx, shade.dy);
+    }
     blit(img, alpha);
-    if (nextImg) blit(nextImg, alpha * blend);
+    if (nextImg && blend > 0.04) blit(nextImg, alpha * blend);
 
-    if (!set.baked && !p.pop && special !== B.PRISM) {
+    if (!set.baked && !p.pop && entry.shine) {
       const cycle = (sec + p.phase * 9) % 4;
-      const frames = this.sprites.pieces[p.type].shine;
-      if (cycle < 0.5) blit(frames[Math.floor((cycle / 0.5) * frames.length)], 0.75);
+      if (cycle < 0.5) blit(entry.shine[Math.floor((cycle / 0.5) * entry.shine.length)], 0.75);
     }
 
     if (glowing) {

@@ -611,6 +611,7 @@ export function smoothSprites(style) {
     prismShadow: shadowOf(prism[0], soft),
     prismSpots: brightSpots(prism[0]),
     ramps: GEM_RAMPS,
+    version: 0, // bumped whenever the images change, so screen-sized copies get rebuilt
   };
   cache.set(style, set);
   return set;
@@ -658,6 +659,7 @@ export function loadBakedGems() {
       }
     });
     set.baked = true;
+    set.version++;
   }).catch(() => { /* keep the painted stones */ });
   return bakedLoad;
 }

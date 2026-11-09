@@ -296,7 +296,44 @@ class SmoothLook {
     this.pixel = false;
     this.comic = style === 'comic';
     this.sprites = smoothSprites(style);
-    this.shadow = this.comic ? { dx: 0.8, dy: 1, alpha: 0.3 } : { dx: 0.4, dy: 1.3, alpha: 0.8 };
+    this.shadow = this.comic ? { dx: 0.8, dy: 1, alpha: 0.3 } : { dx: 0.3, dy: 0.9, alpha: 0.8 };
+    this.fitted = null;
+  }
+
+  // Copies of every sprite at exactly the size a tile has on screen, with the drop
+  // shadow already underneath: drawing a resting gem is then one plain 1:1 copy
+  // instead of a filtered down-scale of a big sprite plus a separate shadow.
+  fit(S) {
+    const set = this.sprites;
+    const px = Math.max(8, Math.round(T * S));
+    const key = `${px}/${set.version}`;
+    if (this.fitted?.key === key) return this.fitted;
+    const sh = this.shadow;
+    const copy = (src, shadow = null) => {
+      const c = document.createElement('canvas');
+      c.width = c.height = px;
+      const ctx = c.getContext('2d');
+      ctx.imageSmoothingQuality = 'high';
+      if (shadow) {
+        ctx.globalAlpha = sh.alpha;
+        ctx.drawImage(shadow, sh.dx * S, sh.dy * S, px, px);
+        ctx.globalAlpha = 1;
+      }
+      ctx.drawImage(src, 0, 0, px, px);
+      return c;
+    };
+    this.fitted = {
+      key,
+      animated: !!set.baked,
+      pieces: set.pieces.map((p) => ({
+        frames: (p.frames ?? [p.img]).map((f) => copy(f, p.shadow)),
+        white: copy(p.white),
+        shine: set.baked ? null : p.shine.map((f) => copy(f)),
+      })),
+      prism: set.prism.map((f) => copy(f, set.prismShadow)),
+      prismWhite: copy(set.prismWhite),
+    };
+    return this.fitted;
   }
 
   buildFrame(S) {

@@ -92,6 +92,7 @@ html, body {
 }
 body[data-style="pixel"] #bg,
 body[data-style="pixel"] #board,
+body[data-style="pixel"] #board-frame,
 body[data-style="pixel"] #parade { image-rendering: pixelated; }
 
 /* comic halftone over the pixel background */
@@ -160,8 +161,6 @@ body[data-style="pixel"]::after {
   text-overflow: clip;
   transform-origin: left center;
 }
-.stat .value.bump { animation: bump 0.25s ease-out; }
-@keyframes bump { 40% { transform: scale(1.08); } }
 
 .level {
   grid-column: 1 / -1;
@@ -199,7 +198,10 @@ body[data-style="pixel"]::after {
   align-items: center;
   justify-content: center;
 }
+#board-wrap { position: relative; }
+#board-frame { position: absolute; left: 0; top: 0; }
 #board {
+  position: relative;
   display: block;
   touch-action: none;
   cursor: pointer;

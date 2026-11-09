@@ -47,7 +47,8 @@ python3 -m http.server 8080
 Then open http://localhost:8080. ES modules need to be served over HTTP, so
 opening `index.html` directly from disk won't work.
 
-`tools/gallery.html` shows every gem sprite in every style at large size.
+`tools/gallery.html` shows every gem sprite in every style at large size, and
+`tools/bench.mjs` times the drawing of each style (see the comment at its top).
 
 The realistic gems are pre-rendered: they are 3D models traced with refraction,
 Fresnel reflection, total internal reflection and colour absorption, so the game

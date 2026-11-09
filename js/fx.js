@@ -6,6 +6,7 @@ import { INK } from './sprites.js';
 import { star4 } from './gems.js';
 
 const TAU = Math.PI * 2;
+const MAX_PARTS = 600;
 const rand = (a, b) => a + Math.random() * (b - a);
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const FONT = '"Press Start 2P", monospace';
@@ -92,8 +93,9 @@ function burstSprite(w, h, fill, inner) {
 }
 
 // Tiny repeating dot pattern for comic print shading, made on first use.
-let dotTile = null;
+let dotTile = null, dotFor = null, dotPat = null;
 function dotPattern(ctx) {
+  if (dotFor === ctx) return dotPat;
   if (!dotTile) {
     dotTile = document.createElement('canvas');
     dotTile.width = dotTile.height = 8;
@@ -104,9 +106,10 @@ function dotPattern(ctx) {
     t.arc(6, 6, 1.2, 0, TAU);
     t.fill();
   }
-  const pat = ctx.createPattern(dotTile, 'repeat');
-  pat.setTransform?.(new DOMMatrix().scale(0.25));
-  return pat;
+  dotPat = ctx.createPattern(dotTile, 'repeat');
+  dotPat.setTransform?.(new DOMMatrix().scale(0.25));
+  dotFor = ctx;
+  return dotPat;
 }
 
 function polyline(ctx, pts) {
@@ -124,9 +127,57 @@ function starburstPoly(spikes = 13) {
   return pts;
 }
 
+// Shards and sparkles for the smooth styles are pre-drawn once per colour (shards
+// in 16 turns), so that each particle costs a plain image copy rather than an
+// anti-aliased path. Rebuilt only when the board's scale changes.
+const TURNS = 16;
+const particleSprites = new Map();
+
+function shardStrip(colour, ink, cell) {
+  const key = `shard|${colour}|${ink}|${cell}`;
+  let strip = particleSprites.get(key);
+  if (strip) return strip;
+  strip = document.createElement('canvas');
+  strip.width = cell * TURNS;
+  strip.height = cell;
+  const ctx = strip.getContext('2d');
+  const q = cell / 2.8;
+  ctx.lineJoin = 'round';
+  for (let i = 0; i < TURNS; i++) {
+    ctx.save();
+    ctx.translate(i * cell + cell / 2, cell / 2);
+    ctx.rotate((i / TURNS) * TAU);
+    ctx.beginPath();
+    ctx.moveTo(0, -q); ctx.lineTo(q * 0.9, q * 0.65); ctx.lineTo(-q * 0.8, q * 0.5);
+    ctx.closePath();
+    if (ink) { ctx.lineWidth = cell * 0.09; ctx.strokeStyle = INK; ctx.stroke(); }
+    ctx.fillStyle = colour;
+    ctx.fill();
+    ctx.restore();
+  }
+  particleSprites.set(key, strip);
+  return strip;
+}
+
+function sparkSprite(colour, ink, cell) {
+  const key = `spark|${colour}|${ink}|${cell}`;
+  let c = particleSprites.get(key);
+  if (c) return c;
+  c = document.createElement('canvas');
+  c.width = c.height = cell;
+  const ctx = c.getContext('2d');
+  star4(ctx, cell / 2, cell / 2, cell * 0.46, 0.22);
+  if (ink) { ctx.lineWidth = cell * 0.07; ctx.strokeStyle = INK; ctx.stroke(); }
+  ctx.fillStyle = colour;
+  ctx.fill();
+  particleSprites.set(key, c);
+  return c;
+}
+
 export class Fx {
   constructor() {
     this.style = 'pixel';
+    this.pxPerArt = 4; // device pixels per art unit, set by the game for sprite sizes
     this.parts = [];
     this.rings = [];
     this.beams = [];
@@ -144,6 +195,11 @@ export class Fx {
     this.clear();
   }
 
+  active() {
+    return this.parts.length > 0 || this.rings.length > 0 || this.beams.length > 0 || this.bolts.length > 0 ||
+      this.bursts.length > 0 || this.popups.length > 0 || this.flash > 0 || this.shake > 0;
+  }
+
   clear() {
     this.parts.length = this.rings.length = this.beams.length = this.bolts.length = 0;
     this.bursts.length = this.popups.length = 0;
@@ -154,6 +210,8 @@ export class Fx {
 
   // gem shards flying out of a popped piece
   explode(x, y, ramp, count = 10, power = 1) {
+    // a board-wide chain reaction is no prettier with thousands of shards, only slower
+    count = Math.min(count, Math.max(2, MAX_PARTS - this.parts.length));
     const cols = ramp ? ramp.slice(2) : ['#ff5a5a', '#ffd23f', '#5ee7ff', '#b468f0', '#7dff7a', '#ffffff'];
     for (let i = 0; i < count; i++) {
       const a = rand(0, TAU), sp = rand(25, 75) * power;
@@ -225,15 +283,19 @@ export class Fx {
   // ------------------------------------------------------------- update
 
   update(dt) {
+    // particles are updated and compacted in place: no new array every frame
+    let n = 0;
     for (const p of this.parts) {
       p.life += dt;
-      p.vx *= Math.exp(-p.drag * dt);
-      p.vy *= Math.exp(-p.drag * dt);
-      p.vy += p.g * dt;
+      if (p.life >= p.max) continue;
+      const damp = Math.exp(-p.drag * dt);
+      p.vx *= damp;
+      p.vy = p.vy * damp + p.g * dt;
       p.x += p.vx * dt + (p.sway !== undefined ? Math.sin(p.life * 6 + p.sway) * 12 * dt : 0);
       p.y += p.vy * dt;
+      this.parts[n++] = p;
     }
-    this.parts = this.parts.filter((p) => p.life < p.max);
+    this.parts.length = n;
     for (const list of [this.rings, this.beams, this.bolts, this.bursts, this.popups]) for (const e of list) e.t += dt;
     this.rings = this.rings.filter((r) => r.t < r.dur);
     this.beams = this.beams.filter((b) => b.t < b.dur);
@@ -420,44 +482,43 @@ export class Fx {
       }
     }
 
+    // Shards and sparkles are sprite copies (see shardStrip); confetti, rare and
+    // flipping, is batched into one path per colour. Everything shrinks away
+    // instead of fading, so no per-particle transparency is needed.
+    const shardArt = 2.8 * 2 * (comic ? 1.25 : 1.05), sparkArt = 6.8;
+    const shardCell = Math.max(4, Math.ceil(shardArt * this.pxPerArt));
+    const sparkCell = Math.max(4, Math.ceil(sparkArt * this.pxPerArt));
+    const confetti = new Map();
     for (const p of this.parts) {
       const k = p.life / p.max;
-      ctx.globalAlpha = k > 0.7 ? (1 - k) / 0.3 : 1;
+      const fade = k > 0.7 ? (1 - k) / 0.3 : 1;
       if (p.style === 'spark') {
-        star4(ctx, p.x, p.y, 0.5 + Math.sin(k * Math.PI) * 2.8, 0.22);
-        if (comic) {
-          ctx.lineWidth = 0.45;
-          ctx.strokeStyle = INK;
-          ctx.stroke();
-        }
+        const size = sparkArt * (0.5 + Math.sin(k * Math.PI) * 2.8) / 3.3 * fade;
+        if (size < 0.2) continue;
         light(true);
-        ctx.fillStyle = comic ? '#ffffff' : p.c;
-        ctx.fill();
+        ctx.drawImage(sparkSprite(comic ? '#ffffff' : p.c, comic, sparkCell), p.x - size / 2, p.y - size / 2, size, size);
         light(false);
-        continue;
-      }
-      ctx.save();
-      ctx.translate(p.x, p.y);
-      ctx.rotate((p.rot || 0) + p.life * (p.spin || 0));
-      const q = p.size * (comic ? 1.25 : 1.05);
-      ctx.beginPath();
-      if (p.style === 'confetti') {
-        const flip = Math.abs(Math.sin(p.life * 7 + (p.sway || 0)));
-        ctx.rect(-q * 0.6, (-q * 0.9 * flip) / 2, q * 1.2, q * 0.9 * flip + 0.1);
+      } else if (p.style === 'confetti') {
+        let path = confetti.get(p.c);
+        if (!path) confetti.set(p.c, (path = new Path2D()));
+        const a = (p.rot || 0) + p.life * (p.spin || 0), cos = Math.cos(a), sin = Math.sin(a);
+        const q = p.size * (comic ? 1.25 : 1.05) * fade;
+        const flip = Math.abs(Math.sin(p.life * 7 + (p.sway || 0))) * 0.45 * q + 0.05;
+        [[-q * 0.6, -flip], [q * 0.6, -flip], [q * 0.6, flip], [-q * 0.6, flip]]
+          .forEach(([x, y], i) => path[i ? 'lineTo' : 'moveTo'](p.x + x * cos - y * sin, p.y + x * sin + y * cos));
+        path.closePath();
       } else {
-        ctx.moveTo(0, -q);
-        ctx.lineTo(q * 0.9, q * 0.65);
-        ctx.lineTo(-q * 0.8, q * 0.5);
-        ctx.closePath();
+        const size = shardArt * (p.size / 2) * fade;
+        if (size < 0.2) continue;
+        const a = (p.rot || 0) + p.life * (p.spin || 0);
+        const turn = ((Math.round((a / TAU) * TURNS) % TURNS) + TURNS) % TURNS;
+        ctx.drawImage(shardStrip(p.c, comic, shardCell), turn * shardCell, 0, shardCell, shardCell, p.x - size / 2, p.y - size / 2, size, size);
       }
-      if (comic) {
-        ctx.lineWidth = 0.5;
-        ctx.strokeStyle = INK;
-        ctx.stroke();
-      }
-      ctx.fillStyle = p.c;
-      ctx.fill();
-      ctx.restore();
+    }
+    for (const [c, path] of confetti) {
+      if (comic) { ctx.lineWidth = 0.5; ctx.strokeStyle = INK; ctx.stroke(path); }
+      ctx.fillStyle = c;
+      ctx.fill(path);
     }
     ctx.globalAlpha = 1;
 
@@ -544,9 +605,13 @@ export class Fx {
     if (this.style === 'realistic') {
       ctx.font = `700 ${Math.round(size * 1.2)}px ${REAL_FONT}`;
       ctx.save();
-      ctx.shadowColor = 'rgba(8,2,20,0.9)';
-      ctx.shadowBlur = S * 2.2;
-      ctx.shadowOffsetY = S * 0.4;
+      // a soft dark rim instead of a blurred shadow, which is expensive to draw
+      ctx.lineWidth = Math.max(2, S * 1.4);
+      ctx.strokeStyle = 'rgba(8,2,20,0.55)';
+      ctx.strokeText(text, 0, S * 0.35);
+      ctx.strokeStyle = 'rgba(8,2,20,0.35)';
+      ctx.lineWidth = Math.max(3, S * 2.4);
+      ctx.strokeText(text, 0, S * 0.35);
       if (headline) {
         const g = ctx.createLinearGradient(0, -size * 0.6, 0, size * 0.6);
         g.addColorStop(0, '#fff6d0');

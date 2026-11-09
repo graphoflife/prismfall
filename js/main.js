@@ -36,11 +36,13 @@ const fmt = (n) => Math.floor(n).toLocaleString('en-US');
 const hud = {
   shown: 0,
   target: 0,
+  bumpedAt: 0,
   set({ score, best, level, progress }) {
-    if (score > this.target) {
-      $('score').classList.remove('bump');
-      void $('score').offsetWidth;
-      $('score').classList.add('bump');
+    // a little pop on the score; the Web Animations API needs no forced layout
+    const now = performance.now();
+    if (score > this.target && now - this.bumpedAt > 200) {
+      this.bumpedAt = now;
+      $('score').animate?.([{ transform: 'scale(1)' }, { transform: 'scale(1.08)', offset: 0.4 }, { transform: 'scale(1)' }], { duration: 250, easing: 'ease-out' });
     }
     this.target = score;
     if (score < this.shown) this.shown = score;
@@ -63,6 +65,7 @@ audio.musicOn = data.settings.music;
 
 const game = new Game({
   canvas: $('board'),
+  frameCanvas: $('board-frame'),
   audio,
   hooks: {
     save(g) { data.game = g; persist(); },
@@ -73,14 +76,25 @@ game.vibrate = data.settings.vibrate;
 
 // ---------------------------------------------------------- background
 
+// How hard the device is pushed. Slow devices are detected while playing and
+// switched to the light settings, see watchFrameRate().
+const quality = {
+  maxDpr: 2,        // more resolution than 2x is not visible on a phone, but costs 2.25x the pixels
+  idleFps: 24,      // when only the idle shimmer moves
+  activeFps: 60,    // swaps, cascades and explosions; also caps 120 Hz displays
+  backgroundFps: 20,
+  backgroundScale: 1, // background pixels per css pixel in the smooth styles: it is soft anyway
+  light: false,
+};
+
 const bgCanvas = $('bg');
-const bgCtx = bgCanvas.getContext('2d');
+const bgCtx = bgCanvas.getContext('2d', { alpha: false });
 let bg = null;
 let bgTime = 0;
 
 function sizeBackground() {
   // the pixel style uses 3 css pixels per background pixel, the others draw at screen resolution
-  const scale = data.settings.style === 'pixel' ? 1 / 3 : Math.min(window.devicePixelRatio || 1, 2);
+  const scale = data.settings.style === 'pixel' ? 1 / 3 : quality.backgroundScale;
   const w = Math.ceil(window.innerWidth * scale), h = Math.ceil(window.innerHeight * scale);
   bgCanvas.width = w; bgCanvas.height = h;
   bg.resize(w, h);
@@ -217,10 +231,11 @@ const stage = $('stage');
 function layout() {
   const rect = stage.getBoundingClientRect();
   const size = Math.floor(Math.min(rect.width, rect.height));
-  const dpr = Math.min(window.devicePixelRatio || 1, 3);
-  const cv = $('board');
-  cv.style.width = `${size}px`;
-  cv.style.height = `${size}px`;
+  const dpr = Math.min(window.devicePixelRatio || 1, quality.maxDpr);
+  for (const cv of [$('board'), $('board-frame')]) {
+    cv.style.width = `${size}px`;
+    cv.style.height = `${size}px`;
+  }
   game.resize(size, size, dpr);
 }
 new ResizeObserver(layout).observe(stage);
@@ -260,17 +275,52 @@ function drawParade(t) {
 
 // ----------------------------------------------------------------- loop
 
-let last = performance.now();
+// The game logic advances on every display frame, but drawing is paced: the board
+// at full rate only while something moves, the slow background less often still.
+let last = performance.now(), lastBoard = 0, lastBg = 0;
+let vsync = 16.7; // the display's own frame interval, smoothed
+// true when drawing now keeps closest to the wanted rate on this display
+const due = (since, fps) => since + vsync / 2 >= 1000 / fps;
 function frame(now) {
+  requestAnimationFrame(frame);
   const dt = Math.min(50, now - last);
   last = now;
+  vsync += (dt - vsync) * 0.1;
   bgTime += dt / 1000;
-  bg.draw(bgCtx, bgTime, dt / 1000);
-  if (splashOpen) drawParade(bgTime);
   game.update(dt);
-  game.render();
   hud.tick(dt / 1000);
-  requestAnimationFrame(frame);
+
+  const lively = game.lively;
+  const fps = lively ? quality.activeFps : quality.idleFps;
+  if (due(now - lastBoard, fps)) {
+    watchFrameRate(now - lastBoard, lively && fps === quality.activeFps);
+    lastBoard = now;
+    game.render();
+    if (splashOpen) drawParade(bgTime);
+  }
+  if (due(now - lastBg, quality.backgroundFps)) {
+    bg.draw(bgCtx, bgTime, Math.min(0.2, (now - lastBg) / 1000));
+    lastBg = now;
+  }
+}
+
+// If busy stretches keep running well below the target rate, this device needs
+// the light settings: less resolution, a calmer background, no frame blending.
+const slow = { frames: 0, time: 0 };
+function watchFrameRate(gap, measuring) {
+  if (quality.light || !measuring || gap > 200) return;
+  slow.frames++;
+  slow.time += gap;
+  if (slow.frames < 120) return;
+  if (slow.time / slow.frames > 26) goLight();
+  slow.frames = slow.time = 0;
+}
+
+function goLight() {
+  Object.assign(quality, { light: true, maxDpr: 1.5, idleFps: 15, activeFps: 40, backgroundFps: 10, backgroundScale: 0.5 });
+  game.blend = false;
+  layout();
+  sizeBackground();
 }
 
 // ----------------------------------------------------------------- boot
@@ -286,5 +336,5 @@ $('btn-play').textContent = data.game ? 'CONTINUE' : 'PLAY';
 hud.shown = hud.target;
 $('score').textContent = fmt(hud.shown);
 layout();
-if (new URLSearchParams(location.search).has('debug')) window.game = game;
+if (new URLSearchParams(location.search).has('debug')) Object.assign(window, { game, quality, goLight });
 requestAnimationFrame(frame);
