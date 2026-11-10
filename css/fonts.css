@@ -1,0 +1,10 @@
+/* Bundled with the game (latin subset from Google Fonts, all SIL Open Font
+   License 1.1, see fonts/README.md) so every style looks right offline too. */
+@font-face { font-family: Bangers; font-weight: 400; font-display: swap; src: url(../fonts/bangers.woff2) format('woff2'); }
+@font-face { font-family: Cinzel; font-weight: 700; font-display: swap; src: url(../fonts/cinzel-700.woff2) format('woff2'); }
+@font-face { font-family: 'Comic Neue'; font-weight: 400; font-display: swap; src: url(../fonts/comic-neue-400.woff2) format('woff2'); }
+@font-face { font-family: 'Comic Neue'; font-weight: 700; font-display: swap; src: url(../fonts/comic-neue-700.woff2) format('woff2'); }
+@font-face { font-family: Lato; font-weight: 400; font-display: swap; src: url(../fonts/lato-400.woff2) format('woff2'); }
+@font-face { font-family: Lato; font-weight: 700; font-display: swap; src: url(../fonts/lato-700.woff2) format('woff2'); }
+@font-face { font-family: 'Pixelify Sans'; font-weight: 400 700; font-display: swap; src: url(../fonts/pixelify-sans.woff2) format('woff2'); }
+@font-face { font-family: 'Press Start 2P'; font-weight: 400; font-display: swap; src: url(../fonts/press-start-2p.woff2) format('woff2'); }

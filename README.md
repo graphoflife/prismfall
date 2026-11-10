@@ -5,8 +5,21 @@ no timer, no game over, just combos, cascades and explosions.
 
 **Play it:** https://graphoflife.github.io/prismfall/
 
-Works on desktop and phones (swipe or tap to swap). You can add it to your home
-screen and it runs like an app.
+Works on desktop and phones (swipe or tap to swap).
+
+## Install it on your phone
+
+Prismfall installs like an app and then plays **offline**, with no connection needed:
+
+- **Android (Chrome):** open the link, tap the **⋮** menu, then **Install app**
+  (or **Add to home screen**). Chrome turns it into a real installed app with
+  its own icon in the app drawer.
+- **iPhone / iPad (Safari):** open the link, tap **Share**, then **Add to Home Screen**.
+
+The first visit stores a copy of the whole game (about 1.2 MB) on the device.
+After that it starts from the home screen without a connection, and your game
+and records stay saved. When you are online it picks up new versions by itself:
+the update downloads in the background and is used from the next start.
 
 ## Features
 
@@ -14,8 +27,9 @@ screen and it runs like an app.
   - **Realistic**: ray-traced stones that really sparkle as they wobble, on velvet in a gold frame
   - **Comic**: bold ink, flat colour, halftone dots and "ZAP!" starbursts
   - **Pixel**: chunky retro pixel art
-- **Seven jewels**, all drawn in code with no image files: faceted heart, hexagon,
-  kite, emerald, round, trillion and pear cuts
+- **Seven jewels**: faceted heart, hexagon, kite, emerald, round, trillion and
+  pear cuts. The comic and pixel ones are drawn in code; the realistic ones are
+  rendered ahead of time by a small ray tracer
 - **Specials**
   - 4 in a row → **Nova**: blasts the 3×3 area around it
   - L or T shape → **Cross**: clears its whole row and column
@@ -47,6 +61,11 @@ python3 -m http.server 8080
 Then open http://localhost:8080. ES modules need to be served over HTTP, so
 opening `index.html` directly from disk won't work.
 
+The offline copy (`sw.js`) is only switched on over https, so local edits always
+show up. Add `?sw` to the address to test it locally. **After changing any game
+file, run `node tools/stamp-sw.mjs`**: it writes a new version into `sw.js`,
+which is what makes installed copies update. The tests fail while it is stale.
+
 `tools/gallery.html` shows every gem sprite in every style at large size, and
 `tools/bench.mjs` times the drawing of each style (see the comment at its top).
 
@@ -60,10 +79,11 @@ node tools/bake-gems.mjs
 
 ## Tests
 
-The rules engine (`js/board.js`) is DOM-free and covered by Node tests:
+The rules engine (`js/board.js`) is DOM-free and covered by Node tests, and a
+second test checks that the offline copy is complete and up to date:
 
 ```bash
-node tests/board.test.mjs
+npm test
 ```
 
 ## Code map
@@ -80,3 +100,6 @@ node tests/board.test.mjs
 | `js/fx.js` | Particles, shockwaves, lightning, starbursts and score popups in each style |
 | `js/audio.js` | WebAudio sound effects and generative ambient music |
 | `js/main.js` | HUD, menus, persistence and the frame loop |
+| `sw.js` | Service worker that keeps the offline copy of the game |
+| `tools/stamp-sw.mjs` | Writes the file list and version into `sw.js` |
+| `fonts/` | The bundled fonts (SIL Open Font License) |

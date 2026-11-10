@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node tests/board.test.mjs",
+    "test": "node tests/board.test.mjs && node tests/offline.test.mjs",
+    "stamp": "node tools/stamp-sw.mjs",
     "serve": "python3 -m http.server 8080"
   }
 }

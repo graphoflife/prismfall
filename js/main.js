@@ -338,3 +338,19 @@ $('score').textContent = fmt(hud.shown);
 layout();
 if (new URLSearchParams(location.search).has('debug')) Object.assign(window, { game, quality, goLight });
 requestAnimationFrame(frame);
+keepOffline();
+
+// The service worker (sw.js) keeps a copy of the game on the device for offline
+// play. Plain http is the local dev server: there it stays off unless ?sw is
+// given, and a leftover one from testing gets removed so edits show up again.
+function keepOffline() {
+  const sw = navigator.serviceWorker;
+  if (!sw) return;
+  if (location.protocol === 'https:' || new URLSearchParams(location.search).has('sw')) {
+    addEventListener('load', () => sw.register('sw.js').catch(() => { /* stays online only */ }));
+    // ask that an installed app's copy and saves are never cleared to free space
+    if (matchMedia('(display-mode: standalone)').matches) navigator.storage?.persist?.();
+  } else {
+    sw.getRegistrations().then((regs) => regs.forEach((r) => r.unregister()));
+  }
+}
